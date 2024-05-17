@@ -20,10 +20,14 @@ const login = async () => {
     }
 };
 const post = async (text) => {
-    return await agent.api.app.bsky.feed.post.create({ repo: self.handle }, {
-        text: text,
-        createdAt: new Date().toISOString(),
-    });
+    // return await agent.api.app.bsky.feed.post.create(
+    //   { repo: self.handle },
+    //   {
+    //     text: text,
+    //     createdAt: new Date().toISOString(),
+    //   },
+    // );
+    console.log(text);
 };
 const getFollowers = async (user_name) => {
     let cursor = null;
@@ -59,49 +63,55 @@ const getPosts = async (user_name) => {
     let replys = 0;
     let reposts = 0;
     let cursor = null;
-    for (let index = 0; index < 15; index++) {
-        const request = {
-            actor: user_name,
-            limit: 100,
-        };
-        if (cursor) {
-            request.cursor = cursor;
+    try {
+        for (let index = 0; index < 15; index++) {
+            const request = {
+                actor: user_name,
+                limit: 100,
+            };
+            if (cursor) {
+                request.cursor = cursor;
+            }
+            const { data } = await agent.api.app.bsky.feed.getAuthorFeed(request);
+            const filterd = data.feed.filter((item) => {
+                const itemDate = moment(item.post.indexedAt).tz("Asia/Tokyo");
+                return (itemDate.isSameOrAfter(prevDay) &&
+                    itemDate.isBefore(today) &&
+                    item.reason?.$type !== "app.bsky.feed.defs#reasonRepost");
+            });
+            posts += filterd.length;
+            const filterdReplys = data.feed.filter((item) => {
+                const itemDate = moment(item.post.indexedAt).tz("Asia/Tokyo");
+                return (itemDate.isSameOrAfter(prevDay) &&
+                    itemDate.isBefore(today) &&
+                    !!item.reply);
+            });
+            replys += filterdReplys.length;
+            const filterdReposts = data.feed.filter((item) => {
+                const itemDate = moment(item.post.indexedAt).tz("Asia/Tokyo");
+                return (itemDate.isSameOrAfter(prevDay) &&
+                    itemDate.isBefore(today) &&
+                    item.reason?.$type === "app.bsky.feed.defs#reasonRepost");
+            });
+            reposts += filterdReposts.length;
+            if (data.cursor) {
+                cursor = data.cursor;
+            }
+            else {
+                break;
+            }
+            const end = filterd.find((item) => {
+                const itemDate = moment(item.post.indexedAt).tz("Asia/Tokyo");
+                return (itemDate.isBefore(prevDay) &&
+                    item.reason?.$type !== "app.bsky.feed.defs#reasonRepost");
+            });
+            if (end)
+                break;
+            // console.log(data);
         }
-        const { data } = await agent.api.app.bsky.feed.getAuthorFeed(request);
-        const filterd = data.feed.filter((item) => {
-            const itemDate = moment(item.post.indexedAt).tz("Asia/Tokyo");
-            return (itemDate.isSameOrAfter(prevDay) &&
-                itemDate.isBefore(today) &&
-                item.reason?.$type !== "app.bsky.feed.defs#reasonRepost");
-        });
-        posts += filterd.length;
-        const filterdReplys = data.feed.filter((item) => {
-            const itemDate = moment(item.post.indexedAt).tz("Asia/Tokyo");
-            return (itemDate.isSameOrAfter(prevDay) &&
-                itemDate.isBefore(today) &&
-                !!item.reply);
-        });
-        replys += filterdReplys.length;
-        const filterdReposts = data.feed.filter((item) => {
-            const itemDate = moment(item.post.indexedAt).tz("Asia/Tokyo");
-            return (itemDate.isSameOrAfter(prevDay) &&
-                itemDate.isBefore(today) &&
-                item.reason?.$type === "app.bsky.feed.defs#reasonRepost");
-        });
-        reposts += filterdReposts.length;
-        if (data.cursor) {
-            cursor = data.cursor;
-        }
-        else {
-            break;
-        }
-        const end = filterd.find((item) => {
-            const itemDate = moment(item.post.indexedAt).tz("Asia/Tokyo");
-            return (itemDate.isBefore(prevDay) &&
-                item.reason?.$type !== "app.bsky.feed.defs#reasonRepost");
-        });
-        if (end)
-            break;
+    }
+    catch (ex) {
+        console.log(ex);
     }
     return { posts, reposts, replys };
 };
@@ -119,11 +129,12 @@ if (result) {
         text += "4. 感謝のピザを、Shino3に奢ることができる\n";
         const rt = new RichText({ text });
         await rt.detectFacets(agent);
-        const firstPost = await agent.post({
-            $type: "app.bsky.feed.post",
-            text: rt.text,
-            facets: rt.facets,
-        });
+        // const firstPost = await agent.post({
+        //   $type: "app.bsky.feed.post",
+        //   text: rt.text,
+        //   facets: rt.facets,
+        // });
+        console.log(text);
         for (const user of users) {
             try {
                 const { posts, reposts, replys } = await getPosts(user.handle);
@@ -137,28 +148,30 @@ if (result) {
                 text += `投稿　　　　　：${posts - replys}\n`;
                 text += `リプ　　　　　：${replys}\n`;
                 text += `リポスト　　　：${reposts}\n`;
+                // console.log(text);
                 const rt = new RichText({ text });
                 await rt.detectFacets(agent);
-                await agent.post({
-                    $type: "app.bsky.feed.post",
-                    text: rt.text,
-                    facets: rt.facets,
-                    reply: { parent: firstPost, root: firstPost },
-                });
+                // await agent.post({
+                //   $type: "app.bsky.feed.post",
+                //   text: rt.text,
+                //   facets: rt.facets,
+                //   reply: { parent: firstPost, root: firstPost },
+                // });
             }
             catch (ex) {
-                let text = `@${user.handle}さんの集計データ\n`;
-                text += `${prevDay.format("YYYY/MM/DD")}#skylog\n`;
-                text += "\n";
-                text += "取得に失敗しました\n";
-                const rt = new RichText({ text });
-                await rt.detectFacets(agent);
-                await agent.post({
-                    $type: "app.bsky.feed.post",
-                    text: rt.text,
-                    facets: rt.facets,
-                    reply: { parent: firstPost, root: firstPost },
-                });
+                console.log(ex);
+                // let text = `@${user.handle}さんの集計データ\n`;
+                // text += `${prevDay.format("YYYY/MM/DD")}#skylog\n`;
+                // text += "\n";
+                // text += "取得に失敗しました\n";
+                // const rt = new RichText({ text });
+                // await rt.detectFacets(agent);
+                // await agent.post({
+                //   $type: "app.bsky.feed.post",
+                //   text: rt.text,
+                //   facets: rt.facets,
+                //   reply: { parent: firstPost, root: firstPost },
+                // });
             }
             // await sleep(1000);
         }
@@ -166,17 +179,18 @@ if (result) {
         post(`集計終了：${time}`);
     }
     catch (ex) {
+        console.log(ex);
         let text = "@shino3.bsky.social \n";
         text += "\n";
         text += "エラーが起きて動いてないよっ！！\n";
         text += "助けてーーー（>__<）\n";
         const rt = new RichText({ text });
         await rt.detectFacets(agent);
-        const log = await agent.post({
-            $type: "app.bsky.feed.post",
-            text: rt.text,
-            facets: rt.facets,
-        });
+        // const log = await agent.post({
+        //   $type: "app.bsky.feed.post",
+        //   text: rt.text,
+        //   facets: rt.facets,
+        // });
     }
 }
 //# sourceMappingURL=index.js.map

@@ -144,6 +144,7 @@ if (result) {
       $type: "app.bsky.feed.post",
       text: rt.text,
       facets: rt.facets,
+      langs: ["ja"],
     });
 
     for (const user of users) {
@@ -166,6 +167,7 @@ if (result) {
           text: rt.text,
           facets: rt.facets,
           reply: { parent: firstPost, root: firstPost },
+          langs: ["ja"],
         });
       } catch (ex) {
         let text = `@${user.handle}さんの集計データ\n`;
@@ -179,6 +181,7 @@ if (result) {
           text: rt.text,
           facets: rt.facets,
           reply: { parent: firstPost, root: firstPost },
+          langs: ["ja"],
         });
       }
       // await sleep(1000);
@@ -197,6 +200,7 @@ if (result) {
       $type: "app.bsky.feed.post",
       text: rt.text,
       facets: rt.facets,
+      langs: ["ja"],
     });
   }
 }
