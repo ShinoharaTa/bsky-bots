@@ -4,13 +4,7 @@ import { getFollowers } from "../../core/followers.js";
 import { notifyError } from "../../core/notify.js";
 import type { BotContext, BotDefinition } from "../../core/types.js";
 import { countActivity } from "./aggregate.js";
-import {
-  formatEnd,
-  formatFailure,
-  formatIntro,
-  formatStart,
-  formatUser,
-} from "./format.js";
+import { formatEnd, formatIntro, formatStart, formatUser } from "./format.js";
 
 const TIME_FORMAT = "YYYY/MM/DD HH:mm:ss";
 /** この件数未満の投稿しかないユーザーは投稿しない。 */
@@ -38,23 +32,19 @@ export const skylog: BotDefinition = {
 
       for (const user of users) {
         try {
-          const items = await getFeed(
-            ctx.agent,
-            user.handle,
-            bounds,
-            skylog.feedMaxPages,
-          );
+          const items = await getFeed(user.did, bounds, skylog.feedMaxPages, {
+            // リポストも数えるので app.bsky.feed.repost も読む。
+            includeReposts: true,
+          });
           const counts = countActivity(items, bounds);
           if (counts.posts < MIN_POSTS) continue;
           await poster.reply(
             firstPost,
             formatUser(user.handle, bounds.prevDay, counts),
           );
-        } catch {
-          await poster.reply(
-            firstPost,
-            formatFailure(user.handle, bounds.prevDay),
-          );
+        } catch (ex) {
+          // PDS も AppView も駄目だったユーザー。投稿せずログにだけ残す。
+          console.error(`skip ${user.did} (${user.handle}): ${ex}`);
         }
         // await sleep(1000);
       }

@@ -32,14 +32,6 @@ export function formatUser(
   return text;
 }
 
-export function formatFailure(handle: string, prevDay: moment.Moment): string {
-  let text = `@${handle}さんの集計データ\n`;
-  text += `${prevDay.format("YYYY/MM/DD")}#skylog\n`;
-  text += "\n";
-  text += "取得に失敗しました\n";
-  return text;
-}
-
 export function formatEnd(time: string): string {
   return `集計終了：${time}`;
 }

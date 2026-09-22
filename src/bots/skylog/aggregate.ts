@@ -1,6 +1,5 @@
-import type { AppBskyFeedDefs } from "@atproto/api";
 import type { DateBounds } from "../../core/date.js";
-import { inDateBounds, isRepost } from "../../core/feed.js";
+import { type FeedItem, inDateBounds, isRepost } from "../../core/feed.js";
 
 export interface ActivityCounts {
   posts: number;
@@ -10,7 +9,7 @@ export interface ActivityCounts {
 
 /** 前日の 投稿 / リプ / リポスト を数える。 */
 export function countActivity(
-  items: AppBskyFeedDefs.FeedViewPost[],
+  items: FeedItem[],
   bounds: DateBounds,
 ): ActivityCounts {
   const posts = items.filter(
@@ -18,7 +17,7 @@ export function countActivity(
   ).length;
   // リプはリポストを除外していない（現行どおり）。
   const replys = items.filter(
-    (item) => inDateBounds(item, bounds) && !!item.reply,
+    (item) => inDateBounds(item, bounds) && item.isReply,
   ).length;
   const reposts = items.filter(
     (item) => inDateBounds(item, bounds) && isRepost(item),

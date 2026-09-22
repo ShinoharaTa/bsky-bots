@@ -1,6 +1,8 @@
 import type { AppBskyGraphGetFollowers, AtpAgent } from "@atproto/api";
 
 export interface Follower {
+  /** 以降の API 呼び出しは全部これを使う。handle は表示用。 */
+  did: string;
   handle: string;
   name: string | undefined;
 }
@@ -29,6 +31,7 @@ export async function getFollowers(
     console.error(data.followers.length);
     const getUsers = data.followers.map((item) => {
       return {
+        did: item.did,
         handle: item.handle,
         name: item.displayName,
       };

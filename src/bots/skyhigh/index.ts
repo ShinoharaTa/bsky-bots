@@ -20,14 +20,14 @@ const getUserPosts = async (
 ): Promise<UserPosts | null> => {
   let posts: number;
   try {
-    const items = await getFeed(
-      ctx.agent,
-      user.handle,
-      ctx.bounds,
-      skyhigh.feedMaxPages,
-    );
+    const items = await getFeed(user.did, ctx.bounds, skyhigh.feedMaxPages, {
+      // app.bsky.feed.post にリポストは入らないので読む必要が無い。
+      includeReposts: false,
+    });
     posts = countPosts(items, ctx.bounds);
-  } catch {
+  } catch (ex) {
+    // PDS も AppView も駄目だったユーザー。集計から外してログにだけ残す。
+    console.error(`skip ${user.did} (${user.handle}): ${ex}`);
     return null;
   }
   return {
