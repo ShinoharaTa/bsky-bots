@@ -1,0 +1,18 @@
+# skylog を毎日 00:20 JST に起動する。
+#
+# 設置とロールバックの手順は docs/deploy.md。
+[Unit]
+Description=Daily timer for Bluesky bot skylog (00:20 JST)
+Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
+
+[Timer]
+# マシンの TZ は UTC だが、systemd 252 以降は OnCalendar に TZ を書ける。
+OnCalendar=*-*-* 00:20:00 Asia/Tokyo
+# マシンが落ちていて実行時刻を跨いだら、起動後に取り返す。
+Persistent=true
+# 現行 GCP の cron は 00:20:04 と秒までしかブレていないので揃える。
+AccuracySec=1s
+Unit=bsky-skylog.service
+
+[Install]
+WantedBy=timers.target

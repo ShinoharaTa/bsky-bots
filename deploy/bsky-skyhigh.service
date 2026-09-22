@@ -1,0 +1,25 @@
+# skyhigh（フォロワーの前日投稿数ランキング）を 1 日 1 回実行する。
+#
+# 設置とロールバックの手順は docs/deploy.md。
+# timer から起動する前提なので [Install] は持たない（enable するのは timer だけ）。
+[Unit]
+Description=Bluesky bot skyhigh (daily follower post ranking)
+Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
+# 失敗を Bluesky への投稿に依存せず journal に残す（#12）。
+OnFailure=bsky-bots-failure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/workspace/bsky-bots
+# 認証情報は .env（chmod 600）に置く。中身は .env.sample を参照。
+EnvironmentFile=%h/workspace/bsky-bots/.env
+# systemd はシェルを経由しないので ~/.nvm/nvm.sh は読まれない。
+# %h/.local/bin/node は nvm の実体を指す symlink で、nvm のバージョンを
+# 上げても unit を直さずに済むようにするためのもの（docs/deploy.md 参照）。
+ExecStart=%h/.local/bin/node dist/main.js skyhigh --live
+# 未設定だと既定の 90 秒（DefaultTimeoutStartSec）で SIGTERM される。
+# 実測: 新実装のフル dry-run が 406.79 秒（6 分 47 秒）。
+# PDS 直読みは per-host タイムアウト 10 秒 + 429/5xx の指数バックオフで
+# 伸びる余地があるため、実測の約 4.4 倍を上限に取る。
+# （参考: 旧実装は GCP で 56〜96 分かかっていた）
+TimeoutStartSec=1800

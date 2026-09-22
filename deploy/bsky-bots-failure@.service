@@ -1,0 +1,20 @@
+# Bot の実行が失敗したことを journal に残すだけの unit。
+#
+# 各 Bot の service から OnFailure=bsky-bots-failure@%n.service で起動される
+# （%n は失敗した unit 名なので、%i でそのまま systemctl に渡せる）。
+#
+# Bluesky への投稿で失敗を知らせる方法は採らない。#12 では本番が 5 日に 1 日
+# ランキングを落としていたのにエラー通知が 0 件だった。投稿経路そのものが
+# 壊れていると通知も出ないため、投稿に依存しない経路で残す。
+# 外部サービスへは送らない（このマシンから出さない）。
+#
+# 確認:
+#   journalctl --user -t bsky-bots-failure --since today
+[Unit]
+Description=Record the failure of %i to the journal
+
+[Service]
+Type=oneshot
+# systemd-cat でタグと優先度を付けて journal に入れる。
+# priority err なので journalctl --user -p err で拾える。
+ExecStart=/bin/sh -c '{ echo "unit=%i failed"; systemctl --user --no-pager show %i --property=Result --property=ExecMainStatus --property=ExecMainCode --property=InvocationID; } | systemd-cat -t bsky-bots-failure -p err'
