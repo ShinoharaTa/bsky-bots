@@ -40,7 +40,7 @@ export const skylog: BotDefinition = {
           if (counts.posts < MIN_POSTS) continue;
           await poster.reply(
             firstPost,
-            formatUser(user.handle, bounds.prevDay, counts),
+            formatUser(user, bounds.prevDay, counts),
           );
         } catch (ex) {
           // PDS も AppView も駄目だったユーザー。投稿せずログにだけ残す。
