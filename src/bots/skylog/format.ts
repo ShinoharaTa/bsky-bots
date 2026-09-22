@@ -16,7 +16,7 @@ export function formatIntro(): string {
   let text = "ソラログは一日の活動ログをお届けします\n\n";
   text += "1. @skylog.bsky.social をフォローしている\n";
   text += "2. 一日で通常のポストが10件以上\n";
-  text += "3. 一日あたり最大1000投稿まで集計します\n";
+  text += "3. 一日あたり最大3000投稿まで集計します\n";
   text += "4. 感謝のピザを、Shino3に奢ることができる\n";
   return text;
 }

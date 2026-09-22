@@ -1,5 +1,6 @@
 import type { AtpAgent } from "@atproto/api";
 import type { DateBounds } from "./date.js";
+import type { FeedLimits } from "./feed.js";
 import type { Poster } from "./poster.js";
 
 export interface BotContext {
@@ -20,7 +21,7 @@ export interface BotDefinition {
   errorNotifyHandle: string;
   /** フォロワー取得のページ上限。 */
   followersMaxPages: number;
-  /** author feed 取得のページ上限。 */
-  feedMaxPages: number;
+  /** 投稿取得のページ上限。PDS 直読みとフォールバックで別に持つ。 */
+  feedLimits: FeedLimits;
   run(ctx: BotContext): Promise<void>;
 }

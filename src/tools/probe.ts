@@ -1,6 +1,7 @@
 import moment from "moment-timezone";
 import { type DateBounds, TIMEZONE } from "../core/date.js";
 import {
+  DEFAULT_FEED_LIMITS,
   type FeedFetch,
   type FeedItem,
   fetchFromAppView,
@@ -16,7 +17,6 @@ import { describeError } from "../core/retry.js";
  * 読み取り専用の検証ツール。投稿処理は持たない。
  * usage: node dist/tools/probe.js <handle|did> [YYYY-MM-DD(JST, 既定=前日)]
  */
-const MAX_PAGES = 20;
 const TIME_FORMAT = "YYYY/MM/DD HH:mm:ss";
 
 function usage(): void {
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
           did,
           collection,
           bounds,
-          MAX_PAGES,
+          DEFAULT_FEED_LIMITS.maxPages,
         );
         if (collection === POST_COLLECTION) pdsPosts = fetched;
         else pdsReposts = fetched;
@@ -112,9 +112,14 @@ async function main(): Promise<void> {
   console.log("\n--- AppView (app.bsky.feed.getAuthorFeed) ---");
   let appView: FeedFetch | null = null;
   try {
-    appView = await fetchFromAppView(did, bounds, MAX_PAGES, {
-      includeReposts: true,
-    });
+    appView = await fetchFromAppView(
+      did,
+      bounds,
+      DEFAULT_FEED_LIMITS.fallbackMaxPages,
+      {
+        includeReposts: true,
+      },
+    );
     const hit = inBounds(appView, bounds);
     const posts = hit.filter((item) => !item.isRepost);
     const reposts = hit.length - posts.length;

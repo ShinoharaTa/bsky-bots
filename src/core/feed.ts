@@ -18,6 +18,25 @@ const TID_ALPHABET = "234567abcdefghijklmnopqrstuvwxyz";
 export type FeedSource = "pds" | "appview";
 
 /**
+ * 取得のページ上限。listRecords / getAuthorFeed とも 1 ページ 100 件なので
+ * 30 ページ = 3000 投稿。PDS 直読みは rkey で打ち切れるので上限を上げても
+ * 実在する分しか取りに行かないが、AppView フォールバックは 1 ページが重く
+ * 打ち切りも効きにくいので別の上限を持つ。
+ */
+export interface FeedLimits {
+  /** PDS 直読みのページ上限。 */
+  maxPages: number;
+  /** AppView フォールバックのページ上限。 */
+  fallbackMaxPages: number;
+}
+
+/** 集計上限 3000 投稿。フォールバックは据え置きの 20 ページ。 */
+export const DEFAULT_FEED_LIMITS: FeedLimits = {
+  maxPages: 30,
+  fallbackMaxPages: 20,
+};
+
+/**
  * 数えるのに必要な情報だけに落とした 1 件。
  * PDS 直読みと AppView フォールバックで同じ形にする。
  */
@@ -251,26 +270,26 @@ export async function fetchFromAppView(
 export async function fetchFeed(
   did: string,
   bounds: DateBounds,
-  maxPages: number,
+  limits: FeedLimits,
   options: FeedOptions,
 ): Promise<FeedFetch> {
   try {
-    return await fetchFromPds(did, bounds, maxPages, options);
+    return await fetchFromPds(did, bounds, limits.maxPages, options);
   } catch (ex) {
     console.error(
       `pds read failed, falling back to appview: ${did}: ${describeError(ex)}`,
     );
   }
-  return await fetchFromAppView(did, bounds, maxPages, options);
+  return await fetchFromAppView(did, bounds, limits.fallbackMaxPages, options);
 }
 
 /** 数えるのは Bot 側（aggregate.ts）。取得した全件をそのまま返す。 */
 export async function getFeed(
   did: string,
   bounds: DateBounds,
-  maxPages: number,
+  limits: FeedLimits,
   options: FeedOptions,
 ): Promise<FeedItem[]> {
-  const { items } = await fetchFeed(did, bounds, maxPages, options);
+  const { items } = await fetchFeed(did, bounds, limits, options);
   return items;
 }
