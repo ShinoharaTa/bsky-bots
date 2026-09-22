@@ -16,6 +16,7 @@ Bluesky の日次集計 Bot をまとめたリポジトリ。
 ```bash
 npm install
 npm run build
+npm test
 
 # dry-run（既定）。ログインせず、投稿する内容を stdout に JSON Lines で出す
 node dist/main.js skyhigh
@@ -73,7 +74,11 @@ PDS は任意のホストなので落ちていることがある（実例: `at.s
 
 PDS 直読みに切り替えた時点（Phase 3）で、以下は**意図して出力が変わる**。
 
-- ハンドルが未解決（`handle.invalid`）のユーザーが集計対象に入る（skyhigh 9 人 / skylog 5 人）
+- ハンドルが未解決（`handle.invalid`）のユーザーが集計対象に入る（skyhigh 9 人 / skylog 5 人）。
+  このユーザーへの skylog のメンションは、解決できないハンドルを本文に書かないよう
+  **表示テキストを displayName にして mention facet を did で組み立てる**。
+  displayName が空（空白・制御文字だけを含む）なら did をそのまま表示する。
+  ハンドルが解決できるユーザーの出力は従来どおり変わらない
 - skylog のリポスト数は「リポストした時刻」で数える。
   旧実装は AppView の `post.indexedAt`（= **元投稿**が索引された時刻）で数えていた
 - skylog の「リプ」は自分のリプライ投稿だけを数える。

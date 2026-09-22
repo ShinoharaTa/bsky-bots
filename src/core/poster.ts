@@ -1,4 +1,5 @@
-import { type AtpAgent, RichText } from "@atproto/api";
+import type { AtpAgent } from "@atproto/api";
+import { buildFacets, type PostContent } from "./richtext.js";
 
 /** 投稿した結果の参照。スレッド返信の root / parent に使う。 */
 export interface PostRef {
@@ -7,8 +8,12 @@ export interface PostRef {
 }
 
 export interface Poster {
-  post(text: string): Promise<PostRef>;
-  reply(root: PostRef, text: string): Promise<PostRef>;
+  post(content: string | PostContent): Promise<PostRef>;
+  reply(root: PostRef, content: string | PostContent): Promise<PostRef>;
+}
+
+function toContent(content: string | PostContent): PostContent {
+  return typeof content === "string" ? { text: content } : content;
 }
 
 /** 実際に投稿する。--live のときだけ使う。 */
@@ -19,27 +24,30 @@ export class LivePoster implements Poster {
     this.agent = agent;
   }
 
-  async post(text: string): Promise<PostRef> {
-    const rt = new RichText({ text });
-    await rt.detectFacets(this.agent);
+  async post(content: string | PostContent): Promise<PostRef> {
+    const { text, facets } = await this.resolve(content);
     return await this.agent.post({
       $type: "app.bsky.feed.post",
-      text: rt.text,
-      facets: rt.facets,
+      text: text,
+      facets: facets,
       langs: ["ja"],
     });
   }
 
-  async reply(root: PostRef, text: string): Promise<PostRef> {
-    const rt = new RichText({ text });
-    await rt.detectFacets(this.agent);
+  async reply(root: PostRef, content: string | PostContent): Promise<PostRef> {
+    const { text, facets } = await this.resolve(content);
     return await this.agent.post({
       $type: "app.bsky.feed.post",
-      text: rt.text,
-      facets: rt.facets,
+      text: text,
+      facets: facets,
       reply: { parent: root, root: root },
       langs: ["ja"],
     });
+  }
+
+  private async resolve(content: string | PostContent) {
+    const item = toContent(content);
+    return { text: item.text, facets: await buildFacets(this.agent, item) };
   }
 }
 
@@ -56,31 +64,31 @@ export class DryRunPoster implements Poster {
     this.agent = agent;
   }
 
-  async post(text: string): Promise<PostRef> {
-    return await this.emit("post", text, null);
+  async post(content: string | PostContent): Promise<PostRef> {
+    return await this.emit("post", content, null);
   }
 
-  async reply(root: PostRef, text: string): Promise<PostRef> {
-    return await this.emit("reply", text, this.seqOf.get(root.uri) ?? null);
+  async reply(root: PostRef, content: string | PostContent): Promise<PostRef> {
+    return await this.emit("reply", content, this.seqOf.get(root.uri) ?? null);
   }
 
   private async emit(
     kind: "post" | "reply",
-    text: string,
+    content: string | PostContent,
     replyTo: number | null,
   ): Promise<PostRef> {
-    const rt = new RichText({ text });
-    await rt.detectFacets(this.agent);
+    const item = toContent(content);
+    const facets = await buildFacets(this.agent, item);
     this.seq += 1;
     const seq = this.seq;
     console.log(
       JSON.stringify({
         seq,
         kind,
-        text: rt.text,
+        text: item.text,
         langs: ["ja"],
         replyTo,
-        facets: rt.facets ?? [],
+        facets: facets ?? [],
         createdAt: new Date().toISOString(),
       }),
     );
