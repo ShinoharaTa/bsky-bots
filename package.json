@@ -1,0 +1,25 @@
+{
+  "name": "bsky-bots",
+  "version": "1.0.0",
+  "description": "Bluesky bots (skyhigh / skylog)",
+  "private": true,
+  "type": "module",
+  "author": "T.Shinohara",
+  "license": "ISC",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write ."
+  },
+  "dependencies": {
+    "@atproto/api": "^0.20.44",
+    "dotenv": "^16.4.5",
+    "moment-timezone": "^0.5.45"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^20.12.12",
+    "typescript": "^5.4.5"
+  }
+}
