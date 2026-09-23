@@ -15,9 +15,9 @@ export function countActivity(
   const posts = items.filter(
     (item) => inDateBounds(item, bounds) && !isRepost(item),
   ).length;
-  // リプはリポストを除外していない（現行どおり）。
+  // リプは自分のリプライ投稿だけ。リプライのリポストはリプに数えない。
   const replys = items.filter(
-    (item) => inDateBounds(item, bounds) && item.isReply,
+    (item) => inDateBounds(item, bounds) && !isRepost(item) && item.isReply,
   ).length;
   const reposts = items.filter(
     (item) => inDateBounds(item, bounds) && isRepost(item),

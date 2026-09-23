@@ -217,11 +217,13 @@ function toFeedItem(item: AppBskyFeedDefs.FeedViewPost): FeedItem | null {
     // リポストは「いつリポストしたか」で数える。post.indexedAt は元投稿の時刻。
     const timestampMs = Date.parse(item.reason.indexedAt);
     if (Number.isNaN(timestampMs)) return null;
+    // リプライのリポストはリプに数えない。item.reply は元投稿のリプライ情報で、
+    // PDS 直読み（app.bsky.feed.repost に reply は無い）と揃える。
     return {
       timestampMs,
       indexedAtMs: timestampMs,
       isRepost: true,
-      isReply: !!item.reply,
+      isReply: false,
     };
   }
   const record = item.post.record as { createdAt?: unknown } | undefined;
