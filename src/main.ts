@@ -1,6 +1,6 @@
 import { skyhigh } from "./bots/skyhigh/index.js";
 import { skylog } from "./bots/skylog/index.js";
-import { createAgent, login } from "./core/client.js";
+import { createAgent, createReadAgent, login } from "./core/client.js";
 import { loadCredentials, resolveActor } from "./core/config.js";
 import { createDateBounds } from "./core/date.js";
 import { DryRunPoster, LivePoster, type Poster } from "./core/poster.js";
@@ -77,7 +77,8 @@ async function main(): Promise<void> {
     poster = new DryRunPoster(agent);
   }
   await bot.run({
-    agent,
+    // フォロワー取得は投稿用の agent と分け、常に公開エンドポイントから読む。
+    agent: createReadAgent(),
     poster,
     actor: resolveActor(bot),
     bounds: createDateBounds(),

@@ -38,6 +38,7 @@ node dist/tools/probe.js did:plc:bomm4rqxhepvv7uc6nm5zyyp 2026-02-14
 - **既定は dry-run。`--live` を明示したときだけ投稿する。**
 - dry-run は**ログインしない**。読み取りは認証不要のエンドポイントだけを使う。
   `--live` のときだけ `https://bsky.social` に login する（投稿のためだけ）。
+  フォロワー取得は `--live` でも公開エンドポイント（`https://public.api.bsky.app`）から読む。
 - dry-run の出力は 1 行 1 JSON。`{"seq","kind","text","langs","replyTo","facets","createdAt"}`。
   `createdAt` は実行のたびに変わるので新旧の diff 対象から外すこと。
 - 進捗・エラーなどのログは stderr に出す（stdout を JSON Lines 専用にするため）。

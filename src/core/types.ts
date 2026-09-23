@@ -4,6 +4,7 @@ import type { FeedLimits } from "./feed.js";
 import type { Poster } from "./poster.js";
 
 export interface BotContext {
+  /** 読み取り（フォロワー取得）用。live でも公開エンドポイント。投稿は poster が持つ。 */
   agent: AtpAgent;
   poster: Poster;
   /** フォロワー取得の対象アカウント。live では .env の identifier。 */
