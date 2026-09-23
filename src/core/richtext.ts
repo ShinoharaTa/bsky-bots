@@ -1,8 +1,4 @@
-import {
-  type AppBskyRichtextFacet,
-  type AtpAgent,
-  RichText,
-} from "@atproto/api";
+import { AppBskyRichtextFacet, type AtpAgent, RichText } from "@atproto/api";
 
 export type Facet = AppBskyRichtextFacet.Main;
 
@@ -44,6 +40,18 @@ function overlaps(a: Facet, b: Facet): boolean {
 }
 
 /**
+ * did が入っていない mention を持つ facet か。detectFacets はハンドルの解決に
+ * 失敗すると feature.did に空文字を入れるので、そのまま投稿すると壊れた facet になる。
+ */
+function hasInvalidMention(facet: Facet): boolean {
+  return facet.features.some(
+    (feature) =>
+      AppBskyRichtextFacet.isMention(feature) &&
+      !(typeof feature.did === "string" && feature.did.startsWith("did:")),
+  );
+}
+
+/**
  * detectFacets の結果と手組みの facet をマージする。
  * detectFacets は facets を丸ごと上書きするので、渡す前に混ぜることはできない。
  * 範囲が重なった自動検出分は手組みを優先して落とす。
@@ -54,9 +62,12 @@ export async function buildFacets(
 ): Promise<Facet[] | undefined> {
   const rt = new RichText({ text: content.text });
   await rt.detectFacets(agent);
+  // 解決できなかったメンションは facet ごと捨てる（本文の @handle はただの文字列になる）。
+  const resolved = rt.facets?.filter((facet) => !hasInvalidMention(facet));
   const manual = content.facets ?? [];
-  if (manual.length === 0) return rt.facets;
-  const detected = (rt.facets ?? []).filter(
+  // detectFacets と同じく、1 つも無ければ undefined。
+  if (manual.length === 0) return resolved?.length ? resolved : undefined;
+  const detected = (resolved ?? []).filter(
     (facet) => !manual.some((item) => overlaps(facet, item)),
   );
   return [...detected, ...manual].sort(

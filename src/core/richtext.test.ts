@@ -15,6 +15,20 @@ const agent = {
   },
 } as unknown as AtpAgent;
 
+/** resolveHandle が失敗する agent。detectFacets は did に空文字を入れる。 */
+const failingAgent = {
+  com: {
+    atproto: {
+      identity: {
+        resolveHandle: async ({ handle }: { handle: string }) => {
+          if (handle === "gone.bsky.social") throw new Error("not found");
+          return { data: { did: `did:plc:resolved-${handle}` } };
+        },
+      },
+    },
+  },
+} as unknown as AtpAgent;
+
 describe("utf8Length", () => {
   it("UTF-16 の文字数ではなく UTF-8 のバイト数を返す", () => {
     expect(utf8Length("@高校生")).toBe(10);
@@ -71,6 +85,39 @@ describe("buildFacets", () => {
     });
     expect(facets).toEqual([
       mentionFacet("did:plc:u2422q7nqnd3x3mn4ed56uxx", 0, 11),
+    ]);
+  });
+
+  it("ハンドルが解決できなかったメンションは facet ごと捨てる", async () => {
+    const facets = await buildFacets(failingAgent, {
+      text: "@gone.bsky.socialさんの集計データ #skylog",
+    });
+    expect(facets).toHaveLength(1);
+    expect(facets?.[0].features[0]).toEqual({
+      $type: "app.bsky.richtext.facet#tag",
+      tag: "skylog",
+    });
+  });
+
+  it("解決できなかったメンションしか無ければ undefined", async () => {
+    const facets = await buildFacets(failingAgent, {
+      text: "@gone.bsky.socialさんの集計データ",
+    });
+    expect(facets).toBeUndefined();
+  });
+
+  it("手組みとマージするときも解決できなかったメンションは捨てる", async () => {
+    const text = "@高校生さんへ @gone.bsky.social と @ok.bsky.social";
+    const facets = await buildFacets(failingAgent, {
+      text,
+      facets: [mentionFacet("did:plc:ymdqgzoop3puhkbwrd7njbke", 0, 10)],
+    });
+    const dids = facets?.flatMap((facet) =>
+      facet.features.map((feature) => (feature as { did?: string }).did),
+    );
+    expect(dids).toEqual([
+      "did:plc:ymdqgzoop3puhkbwrd7njbke",
+      "did:plc:resolved-ok.bsky.social",
     ]);
   });
 });
