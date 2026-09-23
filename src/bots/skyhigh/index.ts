@@ -84,6 +84,8 @@ export const skyhigh: BotDefinition = {
           const userPosts = await getUserPosts(ctx, user, tracker);
           if (userPosts) posts.push(userPosts);
         }
+        // 全員失敗なら空のランキングを投稿せずに止める。
+        tracker.assertAnyFetched();
         const sorted = posts
           .filter((item) => item.posts !== 0)
           .sort((a, b) => b.posts - a.posts);

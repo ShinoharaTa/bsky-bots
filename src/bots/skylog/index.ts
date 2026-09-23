@@ -82,6 +82,9 @@ export const skylog: BotDefinition = {
           tracker.recordPostSuccess();
           // await sleep(1000);
         }
+        // 全員の取得に失敗したら集計終了を投稿せずに止める。
+        // 閾値未満で返信しなかった人も取得には成功しているので成功に数える。
+        tracker.assertAnyFetched();
 
         time = nowJst().format(TIME_FORMAT);
         await poster.post(formatEnd(time));

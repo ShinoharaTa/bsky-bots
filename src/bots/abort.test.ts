@@ -59,8 +59,8 @@ function brokenFetch() {
   return vi.fn(async () => new Response("broken", { status: 400 }));
 }
 
-/** 全員が PDS から前日 12 件取れる。 */
-function healthyFetch() {
+/** 全員が PDS から前日 postCount 件（既定 12 件）取れる。 */
+function healthyFetch(postCount = 12) {
   return vi.fn(async (input: string | URL) => {
     const url = new URL(String(input));
     if (url.hostname === "plc.directory") {
@@ -76,7 +76,7 @@ function healthyFetch() {
     const collection = url.searchParams.get("collection");
     const records =
       collection === "app.bsky.feed.post"
-        ? Array.from({ length: 12 }, (_, index) => ({
+        ? Array.from({ length: postCount }, (_, index) => ({
             uri: `at://did/app.bsky.feed.post/x${index}`,
             value: { createdAt: "2026-09-21T03:00:00.000Z" },
           }))
@@ -132,6 +132,55 @@ describe("取得先が壊れているとき", () => {
     expect(poster.calls[2].text).toBe(NOTIFY);
     expect(errors.join("\n")).toMatch(
       /\[skylog\] summary: status=aborted processed=10 fetch_failed=10/,
+    );
+  });
+});
+
+describe("少人数（--limit-followers=5 相当）で全員失敗したとき", () => {
+  it("skyhigh はランキング以降を投稿せずアボートする", async () => {
+    vi.stubGlobal("fetch", brokenFetch());
+    const poster = new FakePoster();
+    await expect(
+      skyhigh.run(context(fakeAgent("hi5_", 5), poster)),
+    ).rejects.toThrow(/fetch failed for all 5 users/);
+    // 「集計開始」とエラー通知だけ。ランキング・定型文・集計終了はゼロ。
+    expect(poster.calls.map((call) => call.kind)).toEqual(["post", "post"]);
+    expect(poster.calls[1].text).toBe(NOTIFY);
+    expect(errors.join("\n")).toMatch(
+      /\[skyhigh\] summary: status=aborted processed=5 fetch_failed=5/,
+    );
+  });
+
+  it("skylog は集計終了を投稿せずアボートする", async () => {
+    vi.stubGlobal("fetch", brokenFetch());
+    const poster = new FakePoster();
+    await expect(
+      skylog.run(context(fakeAgent("log5_", 5), poster)),
+    ).rejects.toThrow(/fetch failed for all 5 users/);
+    // 「集計開始」「説明」とエラー通知だけ。返信・集計終了はゼロ。
+    expect(poster.calls.map((call) => call.kind)).toEqual([
+      "post",
+      "post",
+      "post",
+    ]);
+    expect(poster.calls[2].text).toBe(NOTIFY);
+    expect(errors.join("\n")).toMatch(
+      /\[skylog\] summary: status=aborted processed=5 fetch_failed=5/,
+    );
+  });
+
+  it("skylog は閾値未満で返信しなかった人も取得成功に数える", async () => {
+    vi.stubGlobal("fetch", healthyFetch(3));
+    const poster = new FakePoster();
+    await skylog.run(context(fakeAgent("few", 5), poster));
+    // 返信は 0 件だが、全員取得には成功しているので集計終了まで出す。
+    expect(poster.calls.map((call) => call.kind)).toEqual([
+      "post",
+      "post",
+      "post",
+    ]);
+    expect(errors.join("\n")).toMatch(
+      /\[skylog\] summary: status=ok processed=5 fetch_failed=0/,
     );
   });
 });

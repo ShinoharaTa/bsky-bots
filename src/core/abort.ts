@@ -78,6 +78,16 @@ export class FailureTracker {
     }
   }
 
+  /**
+   * 取得ループの後に呼ぶ。1 人以上処理して取得成功が 0 人ならアボート。
+   * 少人数だと連続・率の条件に届かず、空の集計を投稿してしまうため。
+   */
+  assertAnyFetched(): void {
+    if (this.processed > 0 && this.processed === this.fetchFailures) {
+      throw new RunAborted(`fetch failed for all ${this.processed} users`);
+    }
+  }
+
   recordPostSuccess(): void {
     this.consecutivePostFailures = 0;
   }

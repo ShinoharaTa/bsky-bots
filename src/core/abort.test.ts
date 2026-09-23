@@ -58,6 +58,21 @@ describe("FailureTracker", () => {
     expect(tracker.postFailures).toBe(5);
   });
 
+  it("取得成功が 0 人ならアボート。1 人でも成功・0 人処理なら続ける", () => {
+    const allFailed = new FailureTracker(policy);
+    for (let i = 0; i < 5; i++) allFailed.recordFetchFailure();
+    expect(() => allFailed.assertAnyFetched()).toThrow(
+      /fetch failed for all 5 users/,
+    );
+
+    const oneOk = new FailureTracker(policy);
+    for (let i = 0; i < 4; i++) oneOk.recordFetchFailure();
+    oneOk.recordFetchSuccess(false);
+    expect(() => oneOk.assertAnyFetched()).not.toThrow();
+
+    expect(() => new FailureTracker(policy).assertAnyFetched()).not.toThrow();
+  });
+
   it("サマリは 1 行で件数と所要秒を出す", () => {
     let now = 1000;
     const tracker = new FailureTracker(policy, () => now);
