@@ -6,3 +6,6 @@ dist/
 # 統合元の作業用クローン（Phase 2-3 の参照用。統合完了後に削除する）
 bsky-skyhigh/
 bsky-skylog/
+
+# Claude Code の作業領域（並行作業用の git worktree が .claude/worktrees/ に作られる）
+.claude/

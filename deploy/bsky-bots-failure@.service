@@ -1,20 +1,33 @@
-# Bot の実行が失敗したことを journal に残すだけの unit。
+# Bot の実行が失敗したことを journal に残し、Discord webhook に知らせる unit。
 #
 # 各 Bot の service から OnFailure=bsky-bots-failure@%n.service で起動される
-# （%n は失敗した unit 名なので、%i でそのまま systemctl に渡せる）。
+# （%n は失敗した unit 名なので、%i でそのまま systemctl / journalctl に渡せる）。
 #
 # Bluesky への投稿で失敗を知らせる方法は採らない。#12 では本番が 5 日に 1 日
 # ランキングを落としていたのにエラー通知が 0 件だった。投稿経路そのものが
-# 壊れていると通知も出ないため、投稿に依存しない経路で残す。
-# 外部サービスへは送らない（このマシンから出さない）。
+# 壊れていると通知も出ないため、投稿に依存しない経路（journal + Discord）で知らせる。
+#
+# 鳴るのは Bot が非 0 終了したとき（取得失敗が続く・投稿失敗・例外）。
+# timer が動いていない・マシンが落ちていた、では鳴らない。**無通知＝正常ではない**。
 #
 # 確認:
 #   journalctl --user -t bsky-bots-failure --since today
+#   journalctl --user -u 'bsky-bots-failure@*' --since today
 [Unit]
-Description=Record the failure of %i to the journal
+Description=Record and notify the failure of %i
 
 [Service]
 Type=oneshot
-# systemd-cat でタグと優先度を付けて journal に入れる。
-# priority err なので journalctl --user -p err で拾える。
+# Bot と同じ本番ツリーと .env を使う（DISCORD_WEBHOOK_URL を読む）。
+WorkingDirectory=%h/deploy/bsky-bots
+EnvironmentFile=%h/deploy/bsky-bots/.env
+# 1. systemd-cat でタグと優先度を付けて journal に入れる。
+#    priority err なので journalctl --user -p err で拾える。
+#    Discord に届かなくてもこちらは残るよう、先に実行する。
 ExecStart=/bin/sh -c '{ echo "unit=%i failed"; systemctl --user --no-pager show %i --property=Result --property=ExecMainStatus --property=ExecMainCode --property=InvocationID; } | systemd-cat -t bsky-bots-failure -p err'
+# 2. Discord webhook に unit 名・ホスト・時刻・Result・ログ末尾を送る。
+#    DISCORD_WEBHOOK_URL が無い・送信に失敗したときは stderr（= journal）に出して
+#    非 0 で終わる。webhook URL はログに出さない。
+ExecStart=%h/.local/bin/node dist/tools/notify-failure.js %i
+# 送信 15 秒 + 429 の待ち最大 60 秒 + 再送 15 秒に収まる値。
+TimeoutStartSec=120
