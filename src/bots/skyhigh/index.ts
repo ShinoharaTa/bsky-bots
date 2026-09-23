@@ -31,6 +31,7 @@ const getUserPosts = async (
     return null;
   }
   return {
+    did: user.did,
     name: user.name,
     handle: user.handle ?? "",
     posts: posts,
