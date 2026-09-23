@@ -19,6 +19,7 @@ export async function getFollowers(
 ): Promise<Follower[]> {
   let cursor: string | null = null;
   let users: Follower[] = [];
+  const seen = new Set<string>();
   for (let index = 0; index < maxPages; index++) {
     const request: AppBskyGraphGetFollowers.QueryParams = {
       actor: actor,
@@ -29,13 +30,18 @@ export async function getFollowers(
     }
     const { data } = await agent.app.bsky.graph.getFollowers(request);
     console.error(data.followers.length);
-    const getUsers = data.followers.map((item) => {
-      return {
+    const getUsers: Follower[] = [];
+    for (const item of data.followers) {
+      // ページングの途中でフォロワーが増減すると同じ人が 2 ページに出ることがある。
+      // 二重に数えないよう did で重複を除く（先に出た方を残す）。
+      if (seen.has(item.did)) continue;
+      seen.add(item.did);
+      getUsers.push({
         did: item.did,
         handle: item.handle,
         name: item.displayName,
-      };
-    });
+      });
+    }
     users = users.concat(getUsers);
     if (limit !== undefined && users.length >= limit) {
       users = users.slice(0, limit);
