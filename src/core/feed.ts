@@ -82,6 +82,20 @@ export function decodeTid(rkey: string): number | null {
   return Number(value >> 10n) / 1000;
 }
 
+/**
+ * UTC ミリ秒を TID にする（decodeTid の逆）。listRecords の開始カーソル用。
+ * clock id は 0。同じマイクロ秒の TID の中で最小の値になる。
+ */
+export function encodeTid(timestampMs: number, clockId = 0): string {
+  let value = (BigInt(Math.round(timestampMs * 1000)) << 10n) | BigInt(clockId);
+  let tid = "";
+  for (let index = 0; index < 13; index++) {
+    tid = TID_ALPHABET[Number(value % 32n)] + tid;
+    value /= 32n;
+  }
+  return tid;
+}
+
 export function isRepost(item: FeedItem): boolean {
   return item.isRepost;
 }
@@ -101,6 +115,15 @@ interface ListRecordsResponse {
 /**
  * PDS の com.atproto.repo.listRecords を直接読む（認証不要）。
  * レコードは rkey の降順で返るので、対象日より古い rkey が出た時点で打ち切る。
+ *
+ * 初回の cursor は対象日の終端（bounds.today）の TID にする。listRecords は
+ * 「cursor の rkey より古いもの」を返すので、当日分を読まずに 1 ページ目から
+ * 対象日に入れる。実行時刻（当日分の件数）で結果が変わらなくなる。
+ * 境界: cursor は today 00:00:00.000000 で clock id 0 の TID = その時刻の TID の最小値。
+ * rkey < cursor はちょうど「timestampMs < today」と同じなので、対象日の最後の
+ * 1 件は漏れず、today ちょうど以降の投稿は入らない（cursor 自身も返らない）。
+ * rkey が TID でないレコードは rkey の並びでしか位置が決まらないので、
+ * cursor より後ろに並ぶものは読まれない（app.bsky.feed.post / repost は TID なので実害は無い）。
  */
 export async function scanPdsCollection(
   pds: string,
@@ -111,7 +134,7 @@ export async function scanPdsCollection(
   retry: RetryOptions = DEFAULT_RETRY,
 ): Promise<FeedFetch> {
   const from = bounds.prevDay.valueOf();
-  let cursor: string | undefined;
+  let cursor: string | undefined = encodeTid(bounds.today.valueOf());
   let requests = 0;
   let bytes = 0;
   let stopped = "ページ上限";
@@ -194,11 +217,13 @@ function toFeedItem(item: AppBskyFeedDefs.FeedViewPost): FeedItem | null {
     // リポストは「いつリポストしたか」で数える。post.indexedAt は元投稿の時刻。
     const timestampMs = Date.parse(item.reason.indexedAt);
     if (Number.isNaN(timestampMs)) return null;
+    // リプライのリポストはリプに数えない。item.reply は元投稿のリプライ情報で、
+    // PDS 直読み（app.bsky.feed.repost に reply は無い）と揃える。
     return {
       timestampMs,
       indexedAtMs: timestampMs,
       isRepost: true,
-      isReply: !!item.reply,
+      isReply: false,
     };
   }
   const record = item.post.record as { createdAt?: unknown } | undefined;
@@ -221,6 +246,10 @@ function toFeedItem(item: AppBskyFeedDefs.FeedViewPost): FeedItem | null {
 /**
  * AppView (app.bsky.feed.getAuthorFeed) 経由。PDS が落ちているときの退避路。
  * 認証不要の公開エンドポイントを使う。
+ *
+ * getAuthorFeed の cursor は PDS の rkey ではないので、PDS 直読みのように
+ * 対象日の終端から読み始めることはできない。当日分も先頭から読むので、
+ * 多投稿ユーザーは fallbackMaxPages（20 ページ）に当たると対象日に届かないことがある。
  */
 export async function fetchFromAppView(
   did: string,

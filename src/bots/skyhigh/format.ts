@@ -1,9 +1,20 @@
 import type moment from "moment-timezone";
+import { hasVisibleText, isResolvableHandle } from "../../core/display.js";
 
 export interface UserPosts {
+  did: string;
   name: string | undefined;
   handle: string;
   posts: number;
+}
+
+/**
+ * ランキングに出す名前。表示名 → ハンドル（解決できるものだけ）→ did の順。
+ * 表示名があればそのまま使う（従来の出力を変えないので trim もしない）。
+ */
+export function rankingNameOf(user: UserPosts): string {
+  if (user.name !== undefined && hasVisibleText(user.name)) return user.name;
+  return isResolvableHandle(user.handle) ? user.handle : user.did;
 }
 
 export function formatStart(time: string, userCount: number): string {
@@ -20,7 +31,7 @@ export function formatRanking(
   for (let index = 0; index < sorted.length; index++) {
     if (index >= 10) break;
     let record = index === 0 ? "👑：" : `${index + 1}位：`;
-    record += `${sorted[index].posts > 999 ? "999+" : sorted[index].posts} ${sorted[index].name}\n`;
+    record += `${sorted[index].posts > 999 ? "999+" : sorted[index].posts} ${rankingNameOf(sorted[index])}\n`;
     if (text.length + record.length > 300) {
       break;
     }

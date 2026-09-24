@@ -44,6 +44,7 @@ const getUserPosts = async (
   }
   tracker.recordFetchSuccess(fallback);
   return {
+    did: user.did,
     name: user.name,
     handle: user.handle ?? "",
     posts: posts,
