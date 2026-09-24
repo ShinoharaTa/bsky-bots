@@ -1,0 +1,23 @@
+# skylog を毎日 00:20 JST に起動する。
+#
+# 設置とロールバックの手順は docs/deploy.md。
+[Unit]
+Description=Daily timer for Bluesky bot skylog (00:20 JST)
+Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
+
+[Timer]
+# マシンの TZ は UTC だが、systemd 252 以降は OnCalendar に TZ を書ける。
+OnCalendar=*-*-* 00:20:00 Asia/Tokyo
+# 取り返し実行はしない。対象日は「起動した日の前日」なので、取り返しと
+# 定時が同じ対象日を 2 回投稿することがある。
+# 例: D 日 00:20 を逃して D+1 日 00:00〜00:20 に起動すると、取り返しが
+# D 日分を集計し、直後の 00:20 の定時も D 日分を集計して二重投稿になる。
+# 取りこぼしは Discord のアラートと 6 章の投稿確認で気づき、手動で実行する
+# （docs/deploy.md 3-2。当日分が投稿済みでないか確かめてから）。
+Persistent=false
+# 現行 GCP の cron は 00:20:04 と秒までしかブレていないので揃える。
+AccuracySec=1s
+Unit=bsky-skylog.service
+
+[Install]
+WantedBy=timers.target

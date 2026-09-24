@@ -120,6 +120,7 @@ PDS 直読みに切り替えた時点（Phase 3）で、以下は**意図して�
 
 - [docs/findings.md](docs/findings.md) — 統合前の実測調査（稼働状況・依存の破壊的変更・重複の洗い出し）
 - [docs/design.md](docs/design.md) — 統合設計
+- [docs/deploy.md](docs/deploy.md) — systemd --user timer への設置・切り替え・ロールバック手順
 
 ## 状態
 

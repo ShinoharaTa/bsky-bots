@@ -1,0 +1,28 @@
+# skylog（フォロワーごとの前日の活動ログ）を 1 日 1 回実行する。
+#
+# 設置とロールバックの手順は docs/deploy.md。
+# timer から起動する前提なので [Install] は持たない（enable するのは timer だけ）。
+[Unit]
+Description=Bluesky bot skylog (daily per-follower activity log)
+Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
+# 失敗を Bluesky への投稿に依存せず journal と Discord に知らせる（#12）。
+OnFailure=bsky-bots-failure@%n.service
+
+[Service]
+Type=oneshot
+# 本番は開発用ツリー（~/workspace/bsky-bots）とは別の clone を使う。
+# タグを checkout してビルドしたものだけが --live で動く（docs/deploy.md 0 章）。
+WorkingDirectory=%h/deploy/bsky-bots
+# 認証情報は .env（chmod 600）に置く。中身は .env.sample を参照。
+EnvironmentFile=%h/deploy/bsky-bots/.env
+# systemd はシェルを経由しないので ~/.nvm/nvm.sh は読まれない。
+# %h/.local/bin/node は nvm の実体を指す symlink で、nvm のバージョンを
+# 上げても unit を直さずに済むようにするためのもの（docs/deploy.md 参照）。
+ExecStart=%h/.local/bin/node dist/main.js skylog --live
+# 未設定だと既定の 90 秒（DefaultTimeoutStartSec）で SIGTERM される。
+# skylog は新実装での実測がまだ無い。所要時間はフォロワー 1 人 1 投稿の
+# レート制限に支配されるため、集計の高速化（skyhigh で実測 406.79 秒）だけでは
+# 短くならない。旧実装の実績 32〜36 分の約 1.7 倍を上限に取る。
+# **推定値。** 切り替え前の受け入れ条件 C（docs/deploy.md 4 章）で実測し、
+# 全件 dry-run がこの値の 1/3 を超えるようならこの値を見直す。
+TimeoutStartSec=3600
