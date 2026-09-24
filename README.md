@@ -38,6 +38,7 @@ node dist/tools/probe.js did:plc:bomm4rqxhepvv7uc6nm5zyyp 2026-02-14
 - **既定は dry-run。`--live` を明示したときだけ投稿する。**
 - dry-run は**ログインしない**。読み取りは認証不要のエンドポイントだけを使う。
   `--live` のときだけ `https://bsky.social` に login する（投稿のためだけ）。
+  フォロワー取得は `--live` でも公開エンドポイント（`https://public.api.bsky.app`）から読む。
 - dry-run の出力は 1 行 1 JSON。`{"seq","kind","text","langs","replyTo","facets","createdAt"}`。
   `createdAt` は実行のたびに変わるので新旧の diff 対象から外すこと。
 - 進捗・エラーなどのログは stderr に出す（stdout を JSON Lines 専用にするため）。
@@ -63,6 +64,36 @@ PDS は任意のホストなので落ちていることがある（実例: `at.s
 - per-host タイムアウト 10 秒 + 429/5xx の指数バックオフ（`core/retry.ts`。`Retry-After` を尊重）
 - PDS が駄目なら AppView（`getAuthorFeed`）にフォールバック
 - どちらも駄目ならそのユーザーだけスキップして stderr に出す。**失敗を投稿しない**
+
+## エラー時の挙動
+
+**失敗したら必ず exit 1 で終わる**（systemd の `OnFailure=` で拾うため）。
+
+- 例外で止まったら、①原因を stderr に出す → ②エラー通知（`@shino3.net` 宛の投稿）を試みる
+  （通知自体の失敗はログにだけ残す）→ ③exit 1。原因のログは通知より先に出すので、
+  投稿経路が壊れていても原因は残る
+- **停止条件（アボート）**。当たったらそれ以降は**一切投稿しない**（skyhigh はランキングを、
+  skylog は返信と集計終了を出さない）。エラー通知は試みて exit 1。
+  閾値は Bot 設定の `abortPolicy`（既定は `core/abort.ts` の `DEFAULT_ABORT_POLICY`）
+  - 取得失敗が**連続 10 人**
+  - 処理済み **20 人以上**で取得失敗率が **20% を超えた**
+  - 投稿（skylog の返信）の失敗が**連続 3 回**
+  - 取得ループの終了時点で**取得成功が 0 人**（少人数だと上の条件に届かないため。
+    skylog は返信の有無ではなく取得に成功したかで数える）
+- skyhigh は全員分を取得してからランキングを投稿するので、アボートはランキング投稿の前に効く
+- skylog の返信の失敗は「取得失敗（`skip`）」とは別に `reply failed` としてログに出す
+- 投稿のリトライは **429 のときだけ**（`Retry-After` を尊重して最大 2 回）。
+  5xx はリトライしない（受理済みかもしれず、投げ直すと二重投稿になる）
+- 正常終了・異常終了とも、最後に stderr へ 1 行サマリを出す
+
+  ```
+  [skyhigh] summary: status=ok processed=5 fetch_failed=0 post_failed=0 fallback=0 elapsed=4.0s
+  ```
+
+  `status` は `ok` / `aborted` / `error`。異常終了時は `reason="..."` が付く。
+  `fallback` は PDS 直読みに失敗して AppView から取れた人数
+- `--live` と `--limit-followers` は併用できない（部分集計のまま本番投稿しないため）。
+  認証情報を読む前に exit 1 で止める
 
 ## 旧実装との差分
 
