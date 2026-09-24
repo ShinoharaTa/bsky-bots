@@ -1,5 +1,5 @@
 import { nowJst } from "../../core/date.js";
-import { getFeed } from "../../core/feed.js";
+import { DEFAULT_FEED_LIMITS, getFeed } from "../../core/feed.js";
 import { type Follower, getFollowers } from "../../core/followers.js";
 import { notifyError } from "../../core/notify.js";
 import type { BotContext, BotDefinition } from "../../core/types.js";
@@ -20,7 +20,7 @@ const getUserPosts = async (
 ): Promise<UserPosts | null> => {
   let posts: number;
   try {
-    const items = await getFeed(user.did, ctx.bounds, skyhigh.feedMaxPages, {
+    const items = await getFeed(user.did, ctx.bounds, skyhigh.feedLimits, {
       // app.bsky.feed.post にリポストは入らないので読む必要が無い。
       includeReposts: false,
     });
@@ -42,7 +42,7 @@ export const skyhigh: BotDefinition = {
   defaultHandle: "skyhigh.bsky.social",
   errorNotifyHandle: "@shino3.net",
   followersMaxPages: 20,
-  feedMaxPages: 20,
+  feedLimits: DEFAULT_FEED_LIMITS,
   run: async (ctx: BotContext): Promise<void> => {
     const { poster, bounds } = ctx;
     try {

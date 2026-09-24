@@ -1,5 +1,5 @@
 import { nowJst } from "../../core/date.js";
-import { getFeed } from "../../core/feed.js";
+import { DEFAULT_FEED_LIMITS, getFeed } from "../../core/feed.js";
 import { getFollowers } from "../../core/followers.js";
 import { notifyError } from "../../core/notify.js";
 import type { BotContext, BotDefinition } from "../../core/types.js";
@@ -15,7 +15,7 @@ export const skylog: BotDefinition = {
   defaultHandle: "skylog.bsky.social",
   errorNotifyHandle: "@shino3.bsky.social",
   followersMaxPages: 20,
-  feedMaxPages: 15,
+  feedLimits: DEFAULT_FEED_LIMITS,
   run: async (ctx: BotContext): Promise<void> => {
     const { poster, bounds } = ctx;
     try {
@@ -32,7 +32,7 @@ export const skylog: BotDefinition = {
 
       for (const user of users) {
         try {
-          const items = await getFeed(user.did, bounds, skylog.feedMaxPages, {
+          const items = await getFeed(user.did, bounds, skylog.feedLimits, {
             // リポストも数えるので app.bsky.feed.repost も読む。
             includeReposts: true,
           });
