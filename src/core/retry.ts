@@ -122,3 +122,54 @@ export async function fetchJson<T>(
   const { body } = await fetchWithRetry(url, options);
   return { data: JSON.parse(body) as T, bytes: body.length };
 }
+
+/** 投稿のリトライ設定。タイムアウトは @atproto/api 側に任せる。 */
+export type PostRetryOptions = Omit<RetryOptions, "timeoutMs">;
+
+/**
+ * 投稿（createRecord）のリトライ。429 のときだけ最大 2 回。
+ * 5xx はリトライしない。サーバ側では受理済みでレスポンスだけ落ちたのかもしれず、
+ * 投げ直すと同じ内容を二重投稿してしまう。429 は受理前に弾かれているので安全。
+ */
+export const POST_RETRY: PostRetryOptions = {
+  maxRetries: 2,
+  baseDelayMs: 1000,
+  maxDelayMs: 60000,
+};
+
+/**
+ * 429 なら Retry-After ヘッダ（無ければ null）、429 以外なら undefined。
+ * @atproto/api は status と headers を持った XRPCError を投げる。
+ */
+function retryAfterOf(ex: unknown): string | null | undefined {
+  if (!(ex instanceof Error)) return undefined;
+  const { status, headers } = ex as Error & {
+    status?: unknown;
+    headers?: Record<string, string | undefined>;
+  };
+  if (status !== 429) return undefined;
+  return headers?.["retry-after"] ?? null;
+}
+
+/** fn を実行し、429 のときだけ Retry-After（無ければ指数バックオフ）を待って投げ直す。 */
+export async function retryOnRateLimit<T>(
+  fn: () => Promise<T>,
+  options: PostRetryOptions = POST_RETRY,
+  wait: (ms: number) => Promise<void> = sleep,
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (ex) {
+      const retryAfter = retryAfterOf(ex);
+      if (retryAfter === undefined || attempt >= options.maxRetries) throw ex;
+      const backoff = options.baseDelayMs * 2 ** attempt;
+      const delay = Math.min(
+        parseRetryAfter(retryAfter) ?? backoff,
+        options.maxDelayMs,
+      );
+      console.error(`post rate limited, retrying in ${delay}ms`);
+      await wait(delay);
+    }
+  }
+}

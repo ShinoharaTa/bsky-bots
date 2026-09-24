@@ -1,4 +1,5 @@
 import type { AtpAgent } from "@atproto/api";
+import { retryOnRateLimit } from "./retry.js";
 import { buildFacets, type PostContent } from "./richtext.js";
 
 /** 投稿した結果の参照。スレッド返信の root / parent に使う。 */
@@ -26,23 +27,27 @@ export class LivePoster implements Poster {
 
   async post(content: string | PostContent): Promise<PostRef> {
     const { text, facets } = await this.resolve(content);
-    return await this.agent.post({
-      $type: "app.bsky.feed.post",
-      text: text,
-      facets: facets,
-      langs: ["ja"],
-    });
+    return await retryOnRateLimit(() =>
+      this.agent.post({
+        $type: "app.bsky.feed.post",
+        text: text,
+        facets: facets,
+        langs: ["ja"],
+      }),
+    );
   }
 
   async reply(root: PostRef, content: string | PostContent): Promise<PostRef> {
     const { text, facets } = await this.resolve(content);
-    return await this.agent.post({
-      $type: "app.bsky.feed.post",
-      text: text,
-      facets: facets,
-      reply: { parent: root, root: root },
-      langs: ["ja"],
-    });
+    return await retryOnRateLimit(() =>
+      this.agent.post({
+        $type: "app.bsky.feed.post",
+        text: text,
+        facets: facets,
+        reply: { parent: root, root: root },
+        langs: ["ja"],
+      }),
+    );
   }
 
   private async resolve(content: string | PostContent) {
