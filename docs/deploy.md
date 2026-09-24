@@ -324,7 +324,7 @@ node dist/tools/compare-gcp.js "$BOT" /tmp/bsky-check/$BOT-$D-am.jsonl | tee /tm
 | 旧上限（skyhigh 20・skylog 15 ページ）に達していた | `--- AppView ---` の `打ち切り: ページ上限`、またはリクエスト数が skyhigh 20 / skylog 15 を超える（probe は**今から**遡るので、GCP の実行時より多めに出る） |
 | skylog のリポスト時刻基準・リプライのリポストの扱い | （skylog は自動判定。非リポスト総数が一致しているもの） |
 | 日付境界付近 | `indexedAt 基準`（旧の基準）と `createdAt 基準` / PDS の件数が違う |
-| 新が取得に失敗した（D の対象） | dry-run の `.err` に `skip <did>` が出ている |
+| 新が取得に失敗した（D の対象） | dry-run の `.err` に `skip <did>` が出ている（サマリの `fetch_failed` に計上） |
 | skylog の「10 件以上」の境目 | 旧だけにいて、PDS の非リポストが 10 件未満（新では投稿対象外） |
 
 **不変条件（skylog）**: 非リポスト総数（投稿＋リプ）がユーザーごとに一致すること。
@@ -381,16 +381,26 @@ dry-run は投稿しないので、`--live` の実時間は**投稿のぶん長�
 
 #### D. 失敗件数
 
-PDS も AppView も駄目だったユーザー（「両経路とも失敗」）が **0〜1 人**であること。
+PDS も AppView も駄目だったユーザー（「両経路とも失敗」）が **0〜1 人**で、
+**`status=ok` で終わっている**こと。
 
-```bash
-grep -c '^skip ' /tmp/bsky-check/$BOT-$D-am.err   # 0 件のとき grep は exit 1 になるが正常
+アプリは終了時に stderr へ 1 行サマリを出す:
+
+```
+[skyhigh] summary: status=ok processed=374 fetch_failed=0 post_failed=0 fallback=3 elapsed=349.7s
 ```
 
-アプリの 1 行サマリ（stderr の最後）に両経路失敗の人数が出るようになったら、そちらで見てよい。
+| 項目 | 意味 | 合格ライン |
+| --- | --- | --- |
+| `status` | `ok` / `aborted`（停止条件に当たった）/ `error`（例外） | `ok` |
+| `fetch_failed` | 両経路とも失敗して集計から外れた人数 | 0〜1 |
+| `post_failed` | 投稿の失敗（dry-run では常に 0） | 0 |
+| `fallback` | PDS 直読みに失敗して AppView から取れた人数（参考。#17） | 目安 5 以下 |
 
 ```bash
-tail -n 3 /tmp/bsky-check/$BOT-$D-am.err
+grep ' summary: ' /tmp/bsky-check/$BOT-$D-am.err
+# 外れた人の内訳（did とエラー）
+grep '^skip ' /tmp/bsky-check/$BOT-$D-am.err
 ```
 
 #### E. dry-run は投稿しない
