@@ -13,7 +13,7 @@ import { fetchJson } from "../core/retry.js";
  * usage: node dist/tools/compare-gcp.js <skyhigh|skylog> <dry-run.jsonl> [YYYY-MM-DD(対象日 JST, 既定=前日)]
  *
  * 差分を「説明のつくもの」と「要確認」に分けて出す。
- * 要確認のユーザーは probe.js の出力を見て人が判断する（docs/deploy.md 4 章）。
+ * 要確認のユーザーは probe.js の出力を見て人が判断する（docs/deploy.md 5 章）。
  */
 
 const BOT_HANDLES = {

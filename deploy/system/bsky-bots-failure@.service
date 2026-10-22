@@ -1,7 +1,8 @@
 # Bot の実行が失敗したことを journal に残し、Discord webhook に知らせる unit。
 #
-# 各 Bot の service から OnFailure=bsky-bots-failure@%n.service で起動される
+# skyhigh / skylog の service から OnFailure=bsky-bots-failure@%n.service で起動される
 # （%n は失敗した unit 名なので、%i でそのまま systemctl / journalctl に渡せる）。
+# 時報（bsky-jiho.service）からは起動しない（2026-10-22 決定 D4）。
 #
 # Bluesky への投稿で失敗を知らせる方法は採らない。#12 では本番が 5 日に 1 日
 # ランキングを落としていたのにエラー通知が 0 件だった。投稿経路そのものが
@@ -11,23 +12,30 @@
 # timer が動いていない・マシンが落ちていた、では鳴らない。**無通知＝正常ではない**。
 #
 # 確認:
-#   journalctl --user -t bsky-bots-failure --since today
-#   journalctl --user -u 'bsky-bots-failure@*' --since today
+#   journalctl -t bsky-bots-failure --since today
+#   journalctl -u 'bsky-bots-failure@*' --since today
 [Unit]
 Description=Record and notify the failure of %i
+Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
 
 [Service]
 Type=oneshot
-# Bot と同じ本番ツリーと .env を使う（DISCORD_WEBHOOK_URL を読む）。
-WorkingDirectory=%h/deploy/bsky-bots
-EnvironmentFile=%h/deploy/bsky-bots/.env
+User=bsky-bots
+Group=bsky-bots
+# notify-failure.js が system の journal を読むため。
+SupplementaryGroups=systemd-journal
+# Bot と同じコードと認証情報を使う（DISCORD_WEBHOOK_URL を読む）。
+WorkingDirectory=/opt/bsky-bots
+EnvironmentFile=/etc/bsky-bots/bsky-bots.env
+# notify-failure.js に OS の systemd の unit として扱わせる（--user を付けない）。
+Environment=BSKY_SYSTEMD_SCOPE=system
 # 1. systemd-cat でタグと優先度を付けて journal に入れる。
-#    priority err なので journalctl --user -p err で拾える。
+#    priority err なので journalctl -p err で拾える。
 #    Discord に届かなくてもこちらは残るよう、先に実行する。
-ExecStart=/bin/sh -c '{ echo "unit=%i failed"; systemctl --user --no-pager show %i --property=Result --property=ExecMainStatus --property=ExecMainCode --property=InvocationID; } | systemd-cat -t bsky-bots-failure -p err'
+ExecStart=/bin/sh -c '{ echo "unit=%i failed"; systemctl --no-pager show %i --property=Result --property=ExecMainStatus --property=ExecMainCode --property=InvocationID; } | systemd-cat -t bsky-bots-failure -p err'
 # 2. Discord webhook に unit 名・ホスト・時刻・Result・ログ末尾を送る。
 #    DISCORD_WEBHOOK_URL が無い・送信に失敗したときは stderr（= journal）に出して
 #    非 0 で終わる。webhook URL はログに出さない。
-ExecStart=%h/.local/bin/node dist/tools/notify-failure.js %i
+ExecStart=/usr/bin/node dist/tools/notify-failure.js %i
 # 送信 15 秒 + 429 の待ち最大 60 秒 + 再送 15 秒に収まる値。
 TimeoutStartSec=120

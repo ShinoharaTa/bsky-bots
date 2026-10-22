@@ -1,0 +1,28 @@
+# 時報を 1 回投稿する。
+#
+# OS の systemd（/etc/systemd/system/）に置く。設置とロールバックの手順は docs/deploy.md。
+# timer から起動する前提なので [Install] は持たない（enable するのは timer だけ）。
+[Unit]
+Description=Bluesky bot jiho (time signal)
+Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
+Wants=network-online.target
+After=network-online.target
+# 失敗通知は出さない（2026-10-22 決定 D4）。失敗は journal に残るだけ。
+
+[Service]
+Type=oneshot
+# root で動かさない。ログイン不可のシステムユーザー（docs/deploy.md 3-B）。
+User=bsky-bots
+Group=bsky-bots
+# タグを checkout してビルドしたもの（docs/deploy.md 4-1）。
+WorkingDirectory=/opt/bsky-bots
+# 認証情報（root:bsky-bots 0640）。中身は .env.sample を参照。
+EnvironmentFile=/etc/bsky-bots/bsky-bots.env
+ExecStart=/usr/bin/node dist/main.js jiho --live
+# 次の起点（30 分後）より十分前に必ず終わらせる。
+TimeoutStartSec=600
+# 実行中にファイルを書かないので強めに絞る。
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

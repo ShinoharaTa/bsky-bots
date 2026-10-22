@@ -6,8 +6,11 @@ import { nowJst } from "../core/date.js";
 
 /**
  * Bot の unit が失敗したことを Discord webhook に知らせる。
- * deploy/bsky-bots-failure@.service（OnFailure=）から起動される。
+ * deploy/system/bsky-bots-failure@.service（OnFailure=）から起動される。
  * usage: node dist/tools/notify-failure.js <unit名>
+ *
+ * 環境変数 BSKY_SYSTEMD_SCOPE=system のときは OS の systemd の unit として扱い、
+ * systemctl / journalctl に --user を付けない。未設定のときは従来どおり --user。
  *
  * webhook URL は秘密情報なので、stdout / stderr のどこにも出さない。
  */
@@ -48,6 +51,18 @@ export interface Deps {
   stderr: (line: string) => void;
   host: () => string;
   now: () => string;
+}
+
+/** systemd のどちらの manager の unit か。 */
+export type SystemdScope = "system" | "user";
+
+export function systemdScope(env: NodeJS.ProcessEnv): SystemdScope {
+  return env.BSKY_SYSTEMD_SCOPE === "system" ? "system" : "user";
+}
+
+/** systemctl / journalctl に付ける scope の引数。 */
+function scopeArgs(scope: SystemdScope): string[] {
+  return scope === "user" ? ["--user"] : [];
 }
 
 /** `systemctl show` の Key=Value 出力を読む。 */
@@ -98,10 +113,14 @@ export function redact(text: string, secret: string): string {
   return secret ? text.split(secret).join("<redacted>") : text;
 }
 
-async function readUnitStatus(unit: string, deps: Deps): Promise<UnitStatus> {
+async function readUnitStatus(
+  unit: string,
+  scope: SystemdScope,
+  deps: Deps,
+): Promise<UnitStatus> {
   try {
     const output = await deps.run("systemctl", [
-      "--user",
+      ...scopeArgs(scope),
       "show",
       unit,
       "--property=Result",
@@ -118,26 +137,36 @@ async function readUnitStatus(unit: string, deps: Deps): Promise<UnitStatus> {
 /**
  * 最後の起動分のログ。InvocationID で絞れなければ unit の直近分に落とす。
  * プロセスの出力は _SYSTEMD_INVOCATION_ID、systemd 自身の
- * 「Failed with result ...」は USER_INVOCATION_ID に付くので両方を拾う。
+ * 「Failed with result ...」は manager 側のフィールドに付くので両方を拾う。
+ * そのフィールドは user manager なら USER_INVOCATION_ID、
+ * system manager（PID 1）なら INVOCATION_ID。
  */
 async function readLog(
   unit: string,
   invocationId: string,
+  scope: SystemdScope,
   deps: Deps,
 ): Promise<string> {
   const options = ["-n", String(LOG_LINES), "--no-pager", "-o", "cat"];
+  const managerField =
+    scope === "user" ? "USER_INVOCATION_ID" : "INVOCATION_ID";
   try {
     if (invocationId) {
       const log = await deps.run("journalctl", [
-        "--user",
+        ...scopeArgs(scope),
         ...options,
         `_SYSTEMD_INVOCATION_ID=${invocationId}`,
         "+",
-        `USER_INVOCATION_ID=${invocationId}`,
+        `${managerField}=${invocationId}`,
       ]);
       if (log.trim()) return log;
     }
-    return await deps.run("journalctl", ["--user", "-u", unit, ...options]);
+    return await deps.run("journalctl", [
+      ...scopeArgs(scope),
+      "-u",
+      unit,
+      ...options,
+    ]);
   } catch (ex) {
     return `(journalctl failed: ${ex})`;
   }
@@ -201,8 +230,9 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
     );
     return 1;
   }
-  const status = await readUnitStatus(unit, deps);
-  const log = await readLog(unit, status.invocationId, deps);
+  const scope = systemdScope(deps.env);
+  const status = await readUnitStatus(unit, scope, deps);
+  const log = await readLog(unit, status.invocationId, scope, deps);
   const content = buildMessage({
     unit,
     host: deps.host(),
