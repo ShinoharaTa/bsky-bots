@@ -6,6 +6,7 @@ Bluesky の日次集計 Bot をまとめたリポジトリ。
 | --- | --- | --- |
 | skyhigh | [@skyhigh.bsky.social](https://bsky.app/profile/skyhigh.bsky.social) | フォロワーの前日投稿数ランキングを毎日投稿する |
 | skylog | [@skylog.bsky.social](https://bsky.app/profile/skylog.bsky.social) | フォロワーごとの前日の活動ログ（投稿 / リプ / リポスト）を毎日投稿する |
+| jiho | [@jiho.bsky.social](https://bsky.app/profile/jiho.bsky.social) | 時報。毎時 :27 / :57（JST）から 0〜6 分後に `なう(YYYY/MM/DD HH:mm:ss)` を投稿する |
 
 もとは `ShinoharaTa/bsky-skyhigh` と `ShinoharaTa/bsky-skylog` の 2 リポジトリだった。
 どちらもコードの大半が同一だったため、共通部分を 1 箇所にまとめるために統合した。
@@ -21,6 +22,7 @@ npm test
 # dry-run（既定）。ログインせず、投稿する内容を stdout に JSON Lines で出す
 node dist/main.js skyhigh
 node dist/main.js skylog
+node dist/main.js jiho
 
 # フォロワーを先頭 N 人に絞って試す
 node dist/main.js skylog --limit-followers=3
@@ -44,7 +46,8 @@ node dist/tools/probe.js did:plc:bomm4rqxhepvv7uc6nm5zyyp 2026-02-14
 - 進捗・エラーなどのログは stderr に出す（stdout を JSON Lines 専用にするため）。
 
 認証情報は `.env`（`.env.sample` を参照）。Bot ごとに
-`SKYHIGH_IDENTIFIER` / `SKYHIGH_APP_PASSWORD` / `SKYLOG_IDENTIFIER` / `SKYLOG_APP_PASSWORD`。
+`SKYHIGH_IDENTIFIER` / `SKYHIGH_APP_PASSWORD` / `SKYLOG_IDENTIFIER` / `SKYLOG_APP_PASSWORD` /
+`JIHO_IDENTIFIER` / `JIHO_APP_PASSWORD`。
 **`AUTHOR` / `PASSWORD` へのフォールバックは持たない**（2 Bot が 1 つの .env を共有するため、
 片方の認証情報でもう片方が投稿する事故を防ぐ）。変数が無ければ起動時に落とす。
 
