@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import type { BotDefinition } from "./types.js";
+import type { AggregateBotDefinition, BotDefinition } from "./types.js";
 
 dotenv.config();
 
@@ -35,6 +35,6 @@ export function loadCredentials(bot: BotDefinition): BotCredentials {
  * フォロワー取得の対象。dry-run は認証情報を要求しないので、
  * 環境変数が無ければ Bot 設定の既定ハンドルに落とす。
  */
-export function resolveActor(bot: BotDefinition): string {
+export function resolveActor(bot: AggregateBotDefinition): string {
   return process.env[envName(bot, "IDENTIFIER")] ?? bot.defaultHandle;
 }

@@ -4,7 +4,11 @@ import { DEFAULT_ABORT_POLICY, FailureTracker } from "./core/abort.js";
 import { DEFAULT_FEED_LIMITS } from "./core/feed.js";
 import type { Poster } from "./core/poster.js";
 import { guardRun } from "./core/run.js";
-import type { BotDefinition } from "./core/types.js";
+import type {
+  AggregateBotDefinition,
+  PostContext,
+  SimpleBotDefinition,
+} from "./core/types.js";
 
 /** 投稿経路が壊れている Poster。notifyError も失敗する。 */
 const brokenPoster: Poster = {
@@ -16,8 +20,9 @@ const brokenPoster: Poster = {
   },
 };
 
-function fakeBot(run: BotDefinition["run"]): BotDefinition {
+function fakeBot(run: AggregateBotDefinition["run"]): AggregateBotDefinition {
   return {
+    kind: "aggregate",
     name: "fake",
     defaultHandle: "fake.test",
     errorNotifyHandle: "@shino3.net",
@@ -26,6 +31,11 @@ function fakeBot(run: BotDefinition["run"]): BotDefinition {
     abortPolicy: DEFAULT_ABORT_POLICY,
     run,
   };
+}
+
+/** 単発投稿 Bot。poster だけ受け取る。 */
+function simpleBot(run: SimpleBotDefinition["run"]): SimpleBotDefinition {
+  return { kind: "simple", name: "simple", run };
 }
 
 let errors: string[];
@@ -56,6 +66,45 @@ describe("parseArgs", () => {
     expect(parseArgs(["skylog", "--limit-followers=5"])?.limitFollowers).toBe(
       5,
     );
+    // Bot 名より前に書いてもよい。
+    expect(parseArgs(["--limit-followers=5", "skylog"])?.limitFollowers).toBe(
+      5,
+    );
+  });
+
+  it("--limit-followers の不正値を拒否する", () => {
+    expect(parseArgs(["skyhigh", "--limit-followers=abc"])).toBeNull();
+    expect(parseArgs(["skylog", "--limit-followers=0"])).toBeNull();
+    expect(parseArgs(["skylog", "--limit-followers=-1"])).toBeNull();
+    expect(parseArgs(["skylog", "--limit-followers=1.5"])).toBeNull();
+    expect(errors.join("\n")).toContain(
+      "invalid --limit-followers: --limit-followers=abc",
+    );
+  });
+
+  it("知らない引数・Bot・2 つ目の Bot 名を拒否する", () => {
+    expect(parseArgs(["skyhigh", "--dry-run"])).toBeNull();
+    expect(parseArgs(["nobot"])).toBeNull();
+    expect(parseArgs(["skyhigh", "skylog"])).toBeNull();
+    expect(parseArgs([])).toBeNull();
+    const log = errors.join("\n");
+    expect(log).toContain("unknown argument for skyhigh: --dry-run");
+    expect(log).toContain("unknown bot: nobot");
+    expect(log).toContain("unknown argument: skylog");
+  });
+
+  it("単発投稿 Bot は --live だけ受け付け、--limit-followers を拒否する", () => {
+    const bots = [simpleBot(async () => {})];
+    expect(parseArgs(["simple"], bots)).toEqual({
+      bot: bots[0],
+      live: false,
+    });
+    expect(parseArgs(["simple", "--live"], bots)?.live).toBe(true);
+    expect(parseArgs(["simple", "--limit-followers=1"], bots)).toBeNull();
+    expect(parseArgs(["--limit-followers=abc", "simple"], bots)).toBeNull();
+    expect(errors.join("\n")).toContain(
+      "unknown argument for simple: --limit-followers=1",
+    );
   });
 });
 
@@ -67,6 +116,26 @@ describe("runCli", () => {
     expect(await runCli(["skyhigh", "--live", "--limit-followers=1"])).toBe(1);
     const log = errors.join("\n");
     expect(log).toContain("cannot be used together");
+    expect(log).not.toContain("is not set");
+    expect(log).not.toContain("login failed");
+  });
+
+  it("単発投稿 Bot には poster だけ渡す", async () => {
+    let received: PostContext | undefined;
+    const bot = simpleBot(async (ctx) => {
+      received = ctx;
+    });
+    expect(await runCli(["simple"], [bot])).toBe(0);
+    expect(received && Object.keys(received)).toEqual(["poster"]);
+  });
+
+  it("単発投稿 Bot への --live --limit-followers も認証情報を読む前に止まる", async () => {
+    const bot = simpleBot(async () => {});
+    expect(
+      await runCli(["simple", "--live", "--limit-followers=1"], [bot]),
+    ).toBe(1);
+    const log = errors.join("\n");
+    expect(log).toContain("unknown argument for simple");
     expect(log).not.toContain("is not set");
     expect(log).not.toContain("login failed");
   });
