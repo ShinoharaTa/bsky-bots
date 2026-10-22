@@ -1,4 +1,5 @@
 # Bot の実行が失敗したことを journal に残し、Discord webhook に知らせる unit。
+# テンプレート。@...@ は deploy/install.sh が埋めて /etc/systemd/system/ に書き込む。
 #
 # skyhigh / skylog の service から OnFailure=bsky-bots-failure@%n.service で起動される
 # （%n は失敗した unit 名なので、%i でそのまま systemctl / journalctl に渡せる）。
@@ -20,13 +21,13 @@ Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
 
 [Service]
 Type=oneshot
-User=bsky-bots
-Group=bsky-bots
+User=@RUN_USER@
+Group=@RUN_GROUP@
 # notify-failure.js が system の journal を読むため。
 SupplementaryGroups=systemd-journal
 # Bot と同じコードと認証情報を使う（DISCORD_WEBHOOK_URL を読む）。
-WorkingDirectory=/opt/bsky-bots
-EnvironmentFile=/etc/bsky-bots/bsky-bots.env
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
 # notify-failure.js に OS の systemd の unit として扱わせる（--user を付けない）。
 Environment=BSKY_SYSTEMD_SCOPE=system
 # 1. systemd-cat でタグと優先度を付けて journal に入れる。
@@ -36,6 +37,6 @@ ExecStart=/bin/sh -c '{ echo "unit=%i failed"; systemctl --no-pager show %i --pr
 # 2. Discord webhook に unit 名・ホスト・時刻・Result・ログ末尾を送る。
 #    DISCORD_WEBHOOK_URL が無い・送信に失敗したときは stderr（= journal）に出して
 #    非 0 で終わる。webhook URL はログに出さない。
-ExecStart=/usr/bin/node dist/tools/notify-failure.js %i
+ExecStart=@NODE@ dist/tools/notify-failure.js %i
 # 送信 15 秒 + 429 の待ち最大 60 秒 + 再送 15 秒に収まる値。
 TimeoutStartSec=120
