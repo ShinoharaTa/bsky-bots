@@ -145,6 +145,68 @@ describe("main", () => {
     expect(sentContent(fetchMock)).toContain("fallback log");
   });
 
+  it("BSKY_SYSTEMD_SCOPE=system なら --user を付けず、INVOCATION_ID で絞る", async () => {
+    const { deps, run, fetchMock } = makeDeps({
+      env: { DISCORD_WEBHOOK_URL: WEBHOOK, BSKY_SYSTEMD_SCOPE: "system" },
+    });
+    expect(await main(["bsky-skyhigh.service"], deps)).toBe(0);
+    expect(run).toHaveBeenCalledWith("systemctl", [
+      "show",
+      "bsky-skyhigh.service",
+      "--property=Result",
+      "--property=ExecMainStatus",
+      "--property=InvocationID",
+    ]);
+    expect(run).toHaveBeenCalledWith("journalctl", [
+      "-n",
+      "30",
+      "--no-pager",
+      "-o",
+      "cat",
+      "_SYSTEMD_INVOCATION_ID=abc123",
+      "+",
+      "INVOCATION_ID=abc123",
+    ]);
+    for (const [, args] of run.mock.calls) {
+      expect(args).not.toContain("--user");
+    }
+    expect(sentContent(fetchMock)).toContain("skyhigh: 3 users skipped");
+  });
+
+  it("BSKY_SYSTEMD_SCOPE=system でも InvocationID で取れなければ unit の直近分に落とす", async () => {
+    const { deps, fetchMock } = makeDeps({
+      env: { DISCORD_WEBHOOK_URL: WEBHOOK, BSKY_SYSTEMD_SCOPE: "system" },
+      run: vi.fn(async (file: string, args: string[]) => {
+        if (file === "systemctl") return SHOW;
+        if (args.some((arg) => arg.startsWith("_SYSTEMD_INVOCATION_ID=")))
+          return "";
+        return "fallback log\n";
+      }),
+    });
+    expect(await main(["bsky-skylog.service"], deps)).toBe(0);
+    expect(deps.run).toHaveBeenLastCalledWith("journalctl", [
+      "-u",
+      "bsky-skylog.service",
+      "-n",
+      "30",
+      "--no-pager",
+      "-o",
+      "cat",
+    ]);
+    expect(sentContent(fetchMock)).toContain("fallback log");
+  });
+
+  it("BSKY_SYSTEMD_SCOPE が system 以外なら従来どおり --user", async () => {
+    const { deps, run } = makeDeps({
+      env: { DISCORD_WEBHOOK_URL: WEBHOOK, BSKY_SYSTEMD_SCOPE: "user" },
+    });
+    expect(await main(["bsky-skyhigh.service"], deps)).toBe(0);
+    expect(run.mock.calls.length).toBeGreaterThan(0);
+    for (const [, args] of run.mock.calls) {
+      expect(args[0]).toBe("--user");
+    }
+  });
+
   it("DISCORD_WEBHOOK_URL が無ければ stderr に出して 1 を返す", async () => {
     const { deps, lines, fetchMock } = makeDeps({ env: {} });
     expect(await main(["bsky-skyhigh.service"], deps)).toBe(1);

@@ -6,6 +6,9 @@
   "type": "module",
   "author": "T.Shinohara",
   "license": "ISC",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",

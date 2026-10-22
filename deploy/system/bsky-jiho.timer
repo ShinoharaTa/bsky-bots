@@ -1,0 +1,19 @@
+# 時報を毎時 :27 / :57 JST に、0〜6 分のゆらぎを付けて起動する。
+#
+# 設置とロールバックの手順は docs/deploy.md。
+[Unit]
+Description=Run jiho at :27 and :57 JST with 0-6 min jitter
+Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
+
+[Timer]
+# OS の TZ に依存させないよう TZ を明記する（systemd 252 以降）。
+OnCalendar=*-*-* *:27,57:00 Asia/Tokyo
+# 現行どおり 0〜6 分のゆらぎ。systemd 側で入れ、プロセス内では待たない。
+RandomizedDelaySec=360
+AccuracySec=1s
+# 停止明けの取り返し実行はしない（逃した枠は欠けるだけ）。
+Persistent=false
+Unit=bsky-jiho.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,21 @@
+# skyhigh を毎日 08:45 JST に起動する。
+#
+# 設置とロールバックの手順は docs/deploy.md。
+[Unit]
+Description=Run skyhigh daily at 08:45 JST
+Documentation=https://github.com/ShinoharaTa/bsky-bots/blob/main/docs/deploy.md
+
+[Timer]
+# OS の TZ に依存させないよう TZ を明記する（systemd 252 以降）。
+OnCalendar=*-*-* 08:45:00 Asia/Tokyo
+# 現行 GCP の cron は 08:45:03 と秒までしかブレていないので揃える。
+AccuracySec=1s
+# 停止明けの取り返し実行で同じ日を二重投稿しない。対象日は「起動した日の前日」
+# なので、取り返しと定時が同じ対象日を 2 回投稿することがある。
+# 例: D 日 08:45 を逃して D+1 日 03:00 に起動すると、取り返しが D 日分を
+# 集計し、D+1 日 08:45 の定時も D 日分を集計して二重投稿になる。
+Persistent=false
+Unit=bsky-skyhigh.service
+
+[Install]
+WantedBy=timers.target
