@@ -4,7 +4,10 @@ import { DEFAULT_FEED_LIMITS, fetchFeed } from "../../core/feed.js";
 import { type Follower, getFollowers } from "../../core/followers.js";
 import { describeError } from "../../core/retry.js";
 import { guardRun } from "../../core/run.js";
-import type { BotContext, BotDefinition } from "../../core/types.js";
+import type {
+  AggregateBotDefinition,
+  AggregateContext,
+} from "../../core/types.js";
 import { countPosts } from "./aggregate.js";
 import {
   formatEnd,
@@ -17,7 +20,7 @@ import {
 const TIME_FORMAT = "YYYY/MM/DD HH:mm:ss";
 
 const getUserPosts = async (
-  ctx: BotContext,
+  ctx: AggregateContext,
   user: Follower,
   tracker: FailureTracker,
 ): Promise<UserPosts | null> => {
@@ -51,14 +54,15 @@ const getUserPosts = async (
   };
 };
 
-export const skyhigh: BotDefinition = {
+export const skyhigh: AggregateBotDefinition = {
+  kind: "aggregate",
   name: "skyhigh",
   defaultHandle: "skyhigh.bsky.social",
   errorNotifyHandle: "@shino3.net",
   followersMaxPages: 20,
   feedLimits: DEFAULT_FEED_LIMITS,
   abortPolicy: DEFAULT_ABORT_POLICY,
-  run: async (ctx: BotContext): Promise<void> => {
+  run: async (ctx: AggregateContext): Promise<void> => {
     const { poster, bounds } = ctx;
     const tracker = new FailureTracker(skyhigh.abortPolicy);
     await guardRun(

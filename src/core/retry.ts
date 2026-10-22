@@ -124,7 +124,13 @@ export async function fetchJson<T>(
 }
 
 /** 投稿のリトライ設定。タイムアウトは @atproto/api 側に任せる。 */
-export type PostRetryOptions = Omit<RetryOptions, "timeoutMs">;
+export type PostRetryOptions = Omit<RetryOptions, "timeoutMs"> & {
+  /**
+   * 待ち時間の合計の上限 (ms)。これを超える待ちが要るなら待たずに元の例外を投げる。
+   * 省略時は上限なし（maxRetries と maxDelayMs だけで決まる）。
+   */
+  maxTotalWaitMs?: number;
+};
 
 /**
  * 投稿（createRecord）のリトライ。429 のときだけ最大 2 回。
@@ -151,12 +157,16 @@ function retryAfterOf(ex: unknown): string | null | undefined {
   return headers?.["retry-after"] ?? null;
 }
 
-/** fn を実行し、429 のときだけ Retry-After（無ければ指数バックオフ）を待って投げ直す。 */
+/**
+ * fn を実行し、429 のときだけ Retry-After（無ければ指数バックオフ）を待って投げ直す。
+ * maxTotalWaitMs を超える待ちが要るときは待たずに元の例外を投げる。
+ */
 export async function retryOnRateLimit<T>(
   fn: () => Promise<T>,
   options: PostRetryOptions = POST_RETRY,
   wait: (ms: number) => Promise<void> = sleep,
 ): Promise<T> {
+  let totalWait = 0;
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
@@ -168,7 +178,17 @@ export async function retryOnRateLimit<T>(
         parseRetryAfter(retryAfter) ?? backoff,
         options.maxDelayMs,
       );
+      if (
+        options.maxTotalWaitMs !== undefined &&
+        totalWait + delay > options.maxTotalWaitMs
+      ) {
+        console.error(
+          `post rate limited, giving up: waiting ${delay}ms would exceed ${options.maxTotalWaitMs}ms in total`,
+        );
+        throw ex;
+      }
       console.error(`post rate limited, retrying in ${delay}ms`);
+      totalWait += delay;
       await wait(delay);
     }
   }

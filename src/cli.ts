@@ -15,34 +15,47 @@ export interface Options {
 }
 
 function usage(bots: BotDefinition[]): void {
-  console.error(
-    "Usage: node dist/main.js <bot> [--live] [--limit-followers=N]",
-  );
+  console.error("Usage: node dist/main.js <bot> [--live] [bot options]");
+  const aggregates = bots.filter((bot) => bot.kind === "aggregate");
+  if (aggregates.length > 0) {
+    console.error(
+      `  --limit-followers=N  ${aggregates.map((bot) => bot.name).join(", ")} only`,
+    );
+  }
   console.error(`Available bots: ${bots.map((bot) => bot.name).join(", ")}`);
+}
+
+/**
+ * Bot 固有の引数を 1 つ読む。読めたら true、Bot が受け付けない引数なら false。
+ * 値が不正なら null（エラーはここで出す）。
+ */
+function parseBotArg(
+  bot: BotDefinition,
+  arg: string,
+  options: Options,
+): boolean | null {
+  // --limit-followers は集計 Bot だけ。
+  if (bot.kind === "aggregate" && arg.startsWith("--limit-followers=")) {
+    const value = Number(arg.slice("--limit-followers=".length));
+    if (!Number.isInteger(value) || value <= 0) {
+      console.error(`invalid --limit-followers: ${arg}`);
+      return null;
+    }
+    options.limitFollowers = value;
+    return true;
+  }
+  return false;
 }
 
 export function parseArgs(
   argv: string[],
   bots: BotDefinition[] = BOTS,
 ): Options | null {
+  // Bot 名は引数のどこにあってもよいので、先に Bot を決めてからフラグを読む。
   let bot: BotDefinition | undefined;
-  let live = false;
-  let limitFollowers: number | undefined;
   for (const arg of argv) {
-    if (arg === "--live") {
-      live = true;
-      continue;
-    }
-    if (arg.startsWith("--limit-followers=")) {
-      const value = Number(arg.slice("--limit-followers=".length));
-      if (!Number.isInteger(value) || value <= 0) {
-        console.error(`invalid --limit-followers: ${arg}`);
-        return null;
-      }
-      limitFollowers = value;
-      continue;
-    }
-    if (arg.startsWith("-") || bot) {
+    if (arg.startsWith("-")) continue;
+    if (bot) {
       console.error(`unknown argument: ${arg}`);
       return null;
     }
@@ -53,12 +66,27 @@ export function parseArgs(
     }
   }
   if (!bot) return null;
+  const options: Options = { bot, live: false };
+  for (const arg of argv) {
+    if (!arg.startsWith("-")) continue;
+    // --live（と既定の dry-run）は全 Bot 共通。
+    if (arg === "--live") {
+      options.live = true;
+      continue;
+    }
+    const parsed = parseBotArg(bot, arg, options);
+    if (parsed === null) return null;
+    if (!parsed) {
+      console.error(`unknown argument for ${bot.name}: ${arg}`);
+      return null;
+    }
+  }
   // 部分集計のまま本番に投稿しないように。
-  if (live && limitFollowers !== undefined) {
+  if (options.live && options.limitFollowers !== undefined) {
     console.error("--live and --limit-followers cannot be used together");
     return null;
   }
-  return { bot, live, limitFollowers };
+  return options;
 }
 
 /**
@@ -88,19 +116,23 @@ export async function runCli(
     // 旧実装はセッションをそのまま console.log していたが accessJwt が
     // ログに残るので handle だけにする。
     console.error(`logged in as ${session.handle}`);
-    poster = new LivePoster(agent);
+    poster = new LivePoster(agent, bot.posterOptions);
   } else {
-    poster = new DryRunPoster(agent);
+    poster = new DryRunPoster(agent, bot.posterOptions);
   }
   try {
-    await bot.run({
-      // フォロワー取得は投稿用の agent と分け、常に公開エンドポイントから読む。
-      agent: createReadAgent(),
-      poster,
-      actor: resolveActor(bot),
-      bounds: createDateBounds(),
-      limitFollowers,
-    });
+    if (bot.kind === "aggregate") {
+      await bot.run({
+        // フォロワー取得は投稿用の agent と分け、常に公開エンドポイントから読む。
+        agent: createReadAgent(),
+        poster,
+        actor: resolveActor(bot),
+        bounds: createDateBounds(),
+        limitFollowers,
+      });
+    } else {
+      await bot.run({ poster });
+    }
   } catch {
     return 1;
   }

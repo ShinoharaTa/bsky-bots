@@ -4,7 +4,7 @@ import { RunAborted } from "../core/abort.js";
 import { createDateBounds } from "../core/date.js";
 import type { Poster, PostRef } from "../core/poster.js";
 import type { PostContent } from "../core/richtext.js";
-import type { BotContext } from "../core/types.js";
+import type { AggregateContext } from "../core/types.js";
 import { skyhigh } from "./skyhigh/index.js";
 import { skylog } from "./skylog/index.js";
 
@@ -50,7 +50,7 @@ function fakeAgent(prefix: string, count: number): AtpAgent {
 
 const bounds = createDateBounds("2026-09-22T12:00:00+09:00");
 
-function context(agent: AtpAgent, poster: Poster): BotContext {
+function context(agent: AtpAgent, poster: Poster): AggregateContext {
   return { agent, poster, actor: "bot.test", bounds };
 }
 

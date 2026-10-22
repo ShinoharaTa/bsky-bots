@@ -4,7 +4,10 @@ import { DEFAULT_FEED_LIMITS, fetchFeed } from "../../core/feed.js";
 import { getFollowers } from "../../core/followers.js";
 import { describeError } from "../../core/retry.js";
 import { guardRun } from "../../core/run.js";
-import type { BotContext, BotDefinition } from "../../core/types.js";
+import type {
+  AggregateBotDefinition,
+  AggregateContext,
+} from "../../core/types.js";
 import { type ActivityCounts, countActivity } from "./aggregate.js";
 import { formatEnd, formatIntro, formatStart, formatUser } from "./format.js";
 
@@ -12,14 +15,15 @@ const TIME_FORMAT = "YYYY/MM/DD HH:mm:ss";
 /** この件数未満の投稿しかないユーザーは投稿しない。 */
 const MIN_POSTS = 10;
 
-export const skylog: BotDefinition = {
+export const skylog: AggregateBotDefinition = {
+  kind: "aggregate",
   name: "skylog",
   defaultHandle: "skylog.bsky.social",
   errorNotifyHandle: "@shino3.net",
   followersMaxPages: 20,
   feedLimits: DEFAULT_FEED_LIMITS,
   abortPolicy: DEFAULT_ABORT_POLICY,
-  run: async (ctx: BotContext): Promise<void> => {
+  run: async (ctx: AggregateContext): Promise<void> => {
     const { poster, bounds } = ctx;
     const tracker = new FailureTracker(skylog.abortPolicy);
     await guardRun(
