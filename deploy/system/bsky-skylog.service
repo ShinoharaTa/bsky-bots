@@ -1,6 +1,7 @@
 # skylog（フォロワーごとの前日の活動ログ）を 1 日 1 回実行する。
 #
-# OS の systemd（/etc/systemd/system/）に置く。設置とロールバックの手順は docs/deploy.md。
+# テンプレート。@...@ は deploy/install.sh が埋めて /etc/systemd/system/ に書き込む。
+# 設置とロールバックの手順は docs/deploy.md。
 # timer から起動する前提なので [Install] は持たない（enable するのは timer だけ）。
 [Unit]
 Description=Bluesky bot skylog (daily per-follower activity log)
@@ -12,14 +13,14 @@ OnFailure=bsky-bots-failure@%n.service
 
 [Service]
 Type=oneshot
-# root で動かさない。ログイン不可のシステムユーザー（docs/deploy.md 3-B）。
-User=bsky-bots
-Group=bsky-bots
-# タグを checkout してビルドしたもの（docs/deploy.md 4-1）。
-WorkingDirectory=/opt/bsky-bots
-# 認証情報（root:bsky-bots 0640）。中身は .env.sample を参照。
-EnvironmentFile=/etc/bsky-bots/bsky-bots.env
-ExecStart=/usr/bin/node dist/main.js skylog --live
+# 実行ユーザー。install.sh の既定は APP_DIR の所有者（--user で上書き）。
+User=@RUN_USER@
+Group=@RUN_GROUP@
+# clone してビルドしたディレクトリ。install.sh の既定はスクリプトの 1 つ上（--app-dir）。
+WorkingDirectory=@APP_DIR@
+# 認証情報（実行ユーザーだけが読めるようにする）。install.sh の既定は APP_DIR/.env（--env-file）。
+EnvironmentFile=@ENV_FILE@
+ExecStart=@NODE@ dist/main.js skylog --live
 # 未設定だと既定の 90 秒（DefaultTimeoutStartSec）で SIGTERM される。
 # **推定値。** 投稿数ぶん伸びる。旧実装の実績 32〜36 分の約 1.7 倍を上限に取る。
 # 切り替え前の受け入れ確認（docs/deploy.md 5 章）と初回の実測で見直す。
@@ -27,5 +28,6 @@ TimeoutStartSec=3600
 # 実行中にファイルを書かない（src に writeFile 等が無いことを確認済み）ので強めに絞る。
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+# APP_DIR / ENV_FILE が /root・/home・/run/user 配下なら read-only、それ以外は yes（install.sh が決める）。
+ProtectHome=@PROTECT_HOME@
 PrivateTmp=yes

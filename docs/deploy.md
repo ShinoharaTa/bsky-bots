@@ -1,12 +1,12 @@
 # デプロイ手順（systemd system 版 / Proxmox Debian コンテナ）
 
-作成 2026-10-22 / 対象: issue #4（GCP から自宅サーバーの systemd timer へ移す）・#22（OS の systemd で動かす構成）
+作成 2026-10-22 / 対象: issue #4（GCP から自宅サーバーの systemd timer へ移す）・#22（OS の systemd で動かす構成）・#26（任意の場所に clone して動かす）
 
 3 Bot（skyhigh / skylog / 時報）を、Proxmox の Debian コンテナ（LXC）の **OS の systemd** に
 timer で登録して動かす手順。GCP 上の旧 Bot から**一斉に**切り替える。
 時報の要件は [jiho-migration-plan.md](jiho-migration-plan.md)。
 
-このリポジトリには unit ファイルを**置いてあるだけ**で、設置も起動もしていない。
+このリポジトリには unit のテンプレートと登録スクリプト（`deploy/install.sh`）を**置いてあるだけ**で、設置も起動もしていない。
 以下は**ユーザーが自分の手で叩く**手順。コピペで実行できる形にしてある。
 
 > 以前の systemd **--user** 版の手順と unit（`deploy/*.service`）は、手順を 1 本にするため削除した（#22）。
@@ -30,25 +30,33 @@ S1 に伴い、旧計画の「skyhigh → 2 週間 → skylog」「時報を先�
 
 ## 1. 構成
 
+**clone する場所・実行ユーザー・Node の場所は自由。** `deploy/install.sh` が unit テンプレートの
+`@APP_DIR@` などを実際の値で埋めて `/etc/systemd/system/` に書き込む（4-3）。
+
 ```
 新ホスト（Proxmox LXC / Debian 12・13）
-├── ユーザー bsky-bots（ログイン不可のシステムユーザー）
-├── /opt/bsky-bots/                    ← git clone（タグを checkout してビルド）
-│   └── dist/main.js, dist/tools/notify-failure.js
-├── /etc/bsky-bots/bsky-bots.env       ← 認証情報（root:bsky-bots 0640）
-└── /etc/systemd/system/
+├── <APP_DIR>/                         ← git clone してビルド（どこでもよい）
+│   ├── dist/main.js, dist/tools/notify-failure.js
+│   └── .env                           ← 認証情報（既定。0600）
+└── /etc/systemd/system/               ← deploy/install.sh が生成して書き込む
     ├── bsky-skyhigh.service / .timer   毎日 08:45 JST         失敗→Discord
     ├── bsky-skylog.service  / .timer   毎日 00:20 JST         失敗→Discord
     ├── bsky-jiho.service    / .timer   毎時 :27/:57 +0〜6分   失敗通知なし
     └── bsky-bots-failure@.service      OnFailure から起動 → Discord webhook
 ```
 
+| 項目 | install.sh の既定 | 推奨例（専用ユーザーで動かす場合。3-B） |
+| --- | --- | --- |
+| コード（`APP_DIR`） | `deploy/install.sh` の 1 つ上（clone した場所） | `/opt/bsky-bots`（所有 `bsky-bots`） |
+| 実行ユーザー（`RUN_USER`） | `APP_DIR` の所有者。グループはそのユーザーのプライマリグループ | `bsky-bots`（`--system`、シェルなし）。root で動かさない |
+| 認証情報（`ENV_FILE`） | `APP_DIR/.env`（実行ユーザーだけが読める `0600`） | `/etc/bsky-bots/bsky-bots.env`（`root:bsky-bots` `0640`）。コードと分け、実行ユーザーは読めるが書けない |
+| Node（`NODE`） | `command -v node` の絶対パス | **Node 24 を apt（NodeSource）で入れる**。`/usr/bin/node` |
+
+/root に置いて root で動かす例: `cd /root/bsky-bots && deploy/install.sh`（`APP_DIR=/root/bsky-bots`・`RUN_USER=root`・`ENV_FILE=/root/bsky-bots/.env` になる）。
+
 | 項目 | 値 | 理由 |
 | --- | --- | --- |
-| 実行ユーザー | `bsky-bots`（`--system`、シェルなし） | root で動かさない |
-| コード | `/opt/bsky-bots`（所有 `bsky-bots`） | ビルドを実行ユーザーで行うため |
-| 認証情報 | `/etc/bsky-bots/bsky-bots.env`（`root:bsky-bots` `0640`） | コードと分ける。実行ユーザーは読めるが書けない |
-| Node | **Node 24 を apt（NodeSource）で入れる**。`/usr/bin/node` | 専用ホストなので system-wide でよい。開発環境（v24.20.0）と系統を揃える。`package.json` の `engines` も `>=24` |
+| Node | Node 24 | 開発環境（v24.20.0）と系統を揃える。`package.json` の `engines` も `>=24`。専用ホストなので system-wide でよい |
 | タイムゾーン | OS は Asia/Tokyo に設定。timer にも `Asia/Tokyo` を明記 | ログを JST で読むため。timer は OS の TZ に依存させない |
 
 > **共有の開発機（N100 サーバ）には置かない。** 共有機では system-wide にランタイムを入れない方針。この文書は**専用の Proxmox LXC** 向け。
@@ -63,6 +71,7 @@ S1 に伴い、旧計画の「skyhigh → 2 週間 → skylog」「時報を先�
 | `deploy/system/bsky-skylog.service` / `.timer` | skylog を毎日 00:20 JST に 1 回実行。失敗で `bsky-bots-failure@` を起動 |
 | `deploy/system/bsky-jiho.service` / `.timer` | 時報を毎時 :27 / :57 JST（+0〜6 分）に実行。**失敗通知なし**（決定 D4。[jiho-migration-plan.md](jiho-migration-plan.md)） |
 | `deploy/system/bsky-bots-failure@.service` | 失敗を journal に残し、Discord webhook に知らせる（`OnFailure=` から起動される） |
+| `deploy/install.sh` | `deploy/system/` の unit テンプレートの `@...@` を埋めて `/etc/systemd/system/` に書き込む（4-3） |
 | `src/tools/notify-failure.ts` | 上の unit が呼ぶ Discord 通知。`BSKY_SYSTEMD_SCOPE=system` で OS の systemd の unit として扱う |
 | `src/tools/compare-gcp.ts` | 受け入れ条件 A の突き合わせ（読み取りのみ） |
 | `src/tools/probe.ts` | 受け入れ条件 A の `[要確認]` の調査（読み取りのみ） |
@@ -71,12 +80,13 @@ S1 に伴い、旧計画の「skyhigh → 2 週間 → skylog」「時報を先�
 
 | 設定 | 値 | 理由 |
 | --- | --- | --- |
-| `User=` / `Group=` | `bsky-bots` | root で動かさない |
-| `WorkingDirectory=` | `/opt/bsky-bots` | 4-1 でタグを checkout してビルドしたもの |
-| `EnvironmentFile=` | `/etc/bsky-bots/bsky-bots.env` | 4-2 |
-| `ExecStart=` | `/usr/bin/node dist/main.js <bot> --live` | 3-B で入れる Node |
+| `User=` / `Group=` | `@RUN_USER@` / `@RUN_GROUP@` | install.sh が埋める（既定は `APP_DIR` の所有者とそのプライマリグループ。`--user`） |
+| `WorkingDirectory=` | `@APP_DIR@` | 4-1 で clone してビルドしたもの（既定は install.sh の 1 つ上。`--app-dir`） |
+| `EnvironmentFile=` | `@ENV_FILE@` | 4-2（既定は `APP_DIR/.env`。`--env-file`） |
+| `ExecStart=` | `@NODE@ dist/main.js <bot> --live` | 3-B で入れる Node（既定は `command -v node`。`--node`） |
+| `ProtectHome=` | `@PROTECT_HOME@` | `APP_DIR` か `ENV_FILE` が `/root`・`/home`・`/run/user` 配下なら `read-only`（`yes` だと読めない）、それ以外は `yes` |
 | `TimeoutStartSec=` | skyhigh 1800 / skylog 3600（**推定値**）/ jiho 600 / failure 120 | 未設定だと既定の 90 秒で SIGTERM される。skylog は 5 章 C と初回の実測で見直す |
-| `NoNewPrivileges` / `ProtectSystem=strict` / `ProtectHome` / `PrivateTmp` | 有効 | Bot は実行中にファイルを書かない |
+| `NoNewPrivileges` / `ProtectSystem=strict` / `PrivateTmp` | 有効 | Bot は実行中にファイルを書かない |
 | `OnCalendar=` | `... Asia/Tokyo` | OS の TZ に依存させない（systemd 252 以降） |
 | `AccuracySec=` | `1s` | 現行 GCP の cron が秒単位でしか揺れていないので揃える |
 | `RandomizedDelaySec=` | jiho のみ `360` | 現行どおり 0〜6 分のゆらぎ。プロセス内では待たない |
@@ -153,7 +163,7 @@ pct enter 210
 ### 3-B. コンテナ内の準備（root で実行）
 
 LXC の root で作業するので、以降の章の `sudo` は付けなくてよい（付けても動く）。
-`sudo -u bsky-bots` は実行ユーザーでコマンドを動かすために使うので、`sudo` パッケージを入れておく。
+`sudo -u "$RUN_USER"` は実行ユーザーでコマンドを動かすために使うので、`sudo` パッケージを入れておく。
 
 ```bash
 # 0. 時刻とタイムゾーン（時計はホストと共有。ずれていたら Proxmox ホスト側の NTP を直す）
@@ -173,25 +183,50 @@ less /tmp/nodesource_setup.sh          # 中身を確認してから実行する
 bash /tmp/nodesource_setup.sh
 apt install -y nodejs
 command -v node && node -v             # /usr/bin/node / v24.x
-
-# 3. 実行ユーザー
-useradd --system --create-home --home-dir /var/lib/bsky-bots --shell /usr/sbin/nologin bsky-bots
-usermod -aG systemd-journal bsky-bots  # 失敗通知が journal を読むため
-
-# 4. ディレクトリ
-install -d -o bsky-bots -g bsky-bots -m 0755 /opt/bsky-bots
-install -d -o root -g bsky-bots -m 0750 /etc/bsky-bots
 ```
 
-> `/usr/bin/node` 以外に入った場合は、unit の `ExecStart` をそのパスに合わせる。
+Node の場所は `deploy/install.sh` が `command -v node` で拾う（別の場所なら `--node` で指定する）。
+
+#### 推奨例: 専用の実行ユーザーとディレクトリを作る（任意）
+
+root で動かすなら不要。専用ユーザーで動かす場合の例:
+
+```bash
+useradd --system --create-home --home-dir /var/lib/bsky-bots --shell /usr/sbin/nologin bsky-bots
+usermod -aG systemd-journal bsky-bots  # 失敗通知が journal を読むため（root なら不要）
+install -d -o bsky-bots -g bsky-bots -m 0755 /opt/bsky-bots
+install -d -o root -g bsky-bots -m 0750 /etc/bsky-bots      # env をコードと分けて置く場合
+```
 
 ---
 
 ## 4. 配置（切り替えの数日前に済ませる）
 
+以降の例は次の変数で書く。自分の環境に合わせて最初に設定しておく。
+
+```bash
+APP_DIR=/opt/bsky-bots        # clone 先。どこでもよい（例: /root/bsky-bots）
+RUN_USER=bsky-bots            # 実行ユーザー＝APP_DIR の所有者（root で動かすなら root）
+ENV_FILE=$APP_DIR/.env        # 認証情報。install.sh の既定。推奨例では /etc/bsky-bots/bsky-bots.env
+```
+
 ### 4-1. コード
 
-本番に出すコミットにタグを打つ（開発用ツリーで。**main にマージ済みのコミットだけ**にタグを打つ）。
+任意の場所に clone してビルドする。`APP_DIR` の所有者が実行ユーザーになる。
+
+```bash
+sudo -u "$RUN_USER" git clone https://github.com/ShinoharaTa/bsky-bots.git "$APP_DIR"
+cd "$APP_DIR"
+sudo -u "$RUN_USER" npm ci
+sudo -u "$RUN_USER" npm run build
+ls -l dist/main.js dist/tools/notify-failure.js
+```
+
+`dist/` は git 管理外。**コードを更新したら必ず `npm ci && npm run build` し直す**（9 章）。
+
+#### タグ運用（任意）
+
+本番に出すコミットを固定したいときは、タグを打って checkout する（開発用ツリーで。**main にマージ済みのコミットだけ**にタグを打つ）。
 
 ```bash
 git fetch origin
@@ -199,19 +234,14 @@ git tag -a v1.0.0 -m "v1.0.0" origin/main
 git push origin v1.0.0
 ```
 
-新ホストで:
+新ホストで（checkout したら `npm ci && npm run build` し直す）:
 
 ```bash
-sudo -u bsky-bots git clone https://github.com/ShinoharaTa/bsky-bots.git /opt/bsky-bots
-cd /opt/bsky-bots
-sudo -u bsky-bots git checkout --detach v1.0.0
-sudo -u bsky-bots npm ci
-sudo -u bsky-bots npm run build
-ls -l dist/main.js dist/tools/notify-failure.js
-sudo -u bsky-bots git describe --tags --exact-match   # v1.0.0
+cd "$APP_DIR"
+sudo -u "$RUN_USER" git fetch --tags origin
+sudo -u "$RUN_USER" git checkout --detach v1.0.0
+sudo -u "$RUN_USER" git describe --tags --exact-match   # v1.0.0
 ```
-
-`dist/` は git 管理外。**タグを切り替えたら必ず `npm ci && npm run build` し直す**（9 章）。
 
 ### 4-2. 認証情報
 
@@ -226,8 +256,12 @@ Discord webhook も用意する（Discord のチャンネル設定 → 連携サ
 env ファイルにだけ書く。チャットやログ、コミットに貼らない。
 
 ```bash
-sudo install -o root -g bsky-bots -m 0640 /dev/null /etc/bsky-bots/bsky-bots.env
-sudoedit /etc/bsky-bots/bsky-bots.env
+# 既定（APP_DIR/.env）: 実行ユーザーだけが読める 0600 で作る
+sudo -u "$RUN_USER" install -m 0600 /dev/null "$ENV_FILE"
+sudo -u "$RUN_USER" "${EDITOR:-vi}" "$ENV_FILE"
+# 推奨例（/etc/bsky-bots/bsky-bots.env）の場合は root:bsky-bots 0640 で作る
+#   install -o root -g bsky-bots -m 0640 /dev/null /etc/bsky-bots/bsky-bots.env
+#   sudoedit /etc/bsky-bots/bsky-bots.env
 ```
 
 中身（値は書かない。変数名だけ）:
@@ -243,33 +277,49 @@ DISCORD_WEBHOOK_URL=
 ```
 
 ```bash
-sudo stat -c '%U:%G %a %n' /etc/bsky-bots/bsky-bots.env    # root:bsky-bots 640
-sudo cut -d= -f1 /etc/bsky-bots/bsky-bots.env              # 変数名だけ表示して確認
-sudo grep -E '^[A-Z_]+=$' /etc/bsky-bots/bsky-bots.env     # 値が空の変数（何も出なければ全部埋まっている）
+sudo stat -c '%U:%G %a %n' "$ENV_FILE"    # 既定なら <RUN_USER>:<group> 600、推奨例なら root:bsky-bots 640
+sudo cut -d= -f1 "$ENV_FILE"              # 変数名だけ表示して確認
+sudo grep -E '^[A-Z_]+=$' "$ENV_FILE"     # 値が空の変数（何も出なければ全部埋まっている）
 ```
 
 - 値をクォートで囲まない（systemd の `EnvironmentFile` はクォートを値に含めることがある）。
 
-### 4-3. unit の配置（**まだ enable しない**）
+### 4-3. unit の登録（**まだ enable しない**）
+
+`deploy/install.sh` が `deploy/system/` の unit テンプレートの `@APP_DIR@` / `@ENV_FILE@` /
+`@RUN_USER@` / `@RUN_GROUP@` / `@NODE@` / `@PROTECT_HOME@` を埋めて `/etc/systemd/system/` に
+`0644` で書き込み、`daemon-reload` と `systemd-analyze verify` まで行う。**timer は有効化しない**（6 章で行う）。
+
+| 値 | 既定 | 上書き |
+| --- | --- | --- |
+| `APP_DIR` | `deploy/install.sh` の 1 つ上 | `--app-dir` |
+| `RUN_USER` / `RUN_GROUP` | `APP_DIR` の所有者 / そのプライマリグループ | `--user` |
+| `NODE` | `command -v node` | `--node` |
+| `ENV_FILE` | `APP_DIR/.env` | `--env-file` |
+| `ProtectHome` | `APP_DIR` か `ENV_FILE` が `/root`・`/home`・`/run/user` 配下なら `read-only`、それ以外は `yes` | — |
 
 ```bash
-sudo install -m 0644 /opt/bsky-bots/deploy/system/*.service /opt/bsky-bots/deploy/system/*.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemd-analyze verify /etc/systemd/system/bsky-*.service /etc/systemd/system/bsky-*.timer
-systemctl list-unit-files 'bsky-*'                          # timer が disabled であること
+cd "$APP_DIR"
+deploy/install.sh --print | less              # 生成結果を確認する（書き込まない。root 不要）
+sudo deploy/install.sh                        # 登録する（root が要る）
+# 推奨例（/etc/bsky-bots/bsky-bots.env）の場合
+#   sudo deploy/install.sh --env-file /etc/bsky-bots/bsky-bots.env
+systemctl list-unit-files 'bsky-*'            # timer が disabled であること
 ```
+
+/root に置いて root で動かす場合は `cd /root/bsky-bots && deploy/install.sh` だけでよい。
+
+- 事前チェックで止まる（エラー終了）: `dist/main.js` / `dist/tools/notify-failure.js` が無い（`npm ci && npm run build` する）、`ENV_FILE` が無い、`RUN_USER` が存在しない、`NODE` が実行できない
+- 警告だけ出す: `ENV_FILE` が他のユーザーから読める（`chmod 600` する）、`RUN_USER` が `systemd-journal` グループに属していない（`usermod -aG systemd-journal <user>` する。root なら不要）、`RUN_USER` が root
+- `sudo` 経由で `node` が PATH に無いときは `--node "$(command -v node)"` を付ける
 
 `verify` は**何も出力されなければ警告 0**。
 `verify` が見るのは**最初の `ExecStart` の実行ファイルだけ**で、`WorkingDirectory` /
-`EnvironmentFile` / 2 つ目以降の `ExecStart`（`bsky-bots-failure@` の Discord 通知）は見ない。パスは別に確かめる:
+`EnvironmentFile` / 2 つ目以降の `ExecStart`（`bsky-bots-failure@` の Discord 通知）は見ない。
+install.sh が事前チェックで `dist/` と `ENV_FILE` の存在を確かめているが、念のため登録後に見るなら:
 
 ```bash
-for p in /usr/bin/node \
-         /opt/bsky-bots/dist/main.js \
-         /opt/bsky-bots/dist/tools/notify-failure.js \
-         /etc/bsky-bots/bsky-bots.env; do
-  test -e "$p" && echo "OK      $p" || echo "MISSING $p"
-done
+grep -hE '^(User|Group|WorkingDirectory|EnvironmentFile|ExecStart|ProtectHome)=' /etc/systemd/system/bsky-skyhigh.service
 ```
 
 ### 4-4. Discord 通知の疎通確認
@@ -302,16 +352,16 @@ dry-run はログインも投稿もしないので、**GCP が動いたままで
 新実装は旧実装と**意図して出力を変えている**（did 化・skylog の分類と時刻基準・上限。README の
 「旧実装との差分」）。したがって新旧の出力が一致することは条件にしない。以下の **A〜E** を見る。
 
-以下のコマンドは新ホストの `/opt/bsky-bots`（本番に出すタグ）で、root から叩く。どれも**読み取りのみ**で投稿しない。
+以下のコマンドは新ホストの `$APP_DIR`（本番に出すコード。4 章の変数）で、root から叩く。どれも**読み取りのみ**で投稿しない。
 
 準備（毎回）:
 
 ```bash
-cd /opt/bsky-bots
+cd "$APP_DIR"
 mkdir -p /tmp/bsky-check
 D=$(TZ=Asia/Tokyo date +%F)          # 実行日（JST）。対象日はこの前日
 BOT=skyhigh                           # skylog のときは BOT=skylog
-run() { sudo -u bsky-bots node "$@"; }
+run() { sudo -u "$RUN_USER" node "$@"; }
 ```
 
 #### A. 本番（GCP）との突き合わせ
@@ -447,8 +497,8 @@ grep -c 'logged in as' /tmp/bsky-check/$BOT-$D-e.err
 ### 5-2. jiho
 
 ```bash
-cd /opt/bsky-bots
-sudo -u bsky-bots node dist/main.js jiho; echo "exit=$?"
+cd "$APP_DIR"
+sudo -u "$RUN_USER" node dist/main.js jiho; echo "exit=$?"
 TZ=Asia/Tokyo date '+%Y/%m/%d %H:%M:%S'
 ```
 
@@ -683,21 +733,22 @@ skylog も同じ（`bsky-skylog.service`）。ただし skylog は途中で落�
 ## 9. 更新手順（新しいリリースを入れるとき）
 
 one-shot なので、**実行中でなければ**入れ替えるだけで次回の起動から新しいコードになる。
-4-1 と同じ手順で新しいタグ（例 `v1.0.1`）を打って push してから:
 
 ```bash
 systemctl list-units 'bsky-*.service' --state=active   # 実行中が無いこと（時報は :27/:57 付近を避ける）
-cd /opt/bsky-bots
-sudo -u bsky-bots git describe --tags --exact-match    # 今のタグを控える（ロールバック先）
-sudo -u bsky-bots git fetch --tags origin
-sudo -u bsky-bots git checkout --detach v1.0.1
-sudo -u bsky-bots npm ci
-sudo -u bsky-bots npm run build
-sudo -u bsky-bots git diff --stat v1.0.0 v1.0.1 -- deploy/system/   # unit が変わったか
-# unit を変えたときだけ
-sudo install -m 0644 deploy/system/*.service deploy/system/*.timer /etc/systemd/system/ && sudo systemctl daemon-reload
+cd "$APP_DIR"
+OLD=$(sudo -u "$RUN_USER" git rev-parse HEAD)         # 今のコミットを控える（ロールバック先）
+sudo -u "$RUN_USER" git pull
+sudo -u "$RUN_USER" npm ci
+sudo -u "$RUN_USER" npm run build
+sudo -u "$RUN_USER" git diff --stat "$OLD" HEAD -- deploy/   # unit（テンプレート / install.sh）が変わったか
+# unit が変わったときだけ（4-3 と同じオプションで）
+sudo deploy/install.sh
 ```
 
+戻すときは `git checkout --detach "$OLD"` してから同じく `npm ci && npm run build`（unit が変わっていたら `deploy/install.sh` も）。
+
+タグ運用（任意。4-1）の場合は `git pull` の代わりに `git fetch --tags origin && git checkout --detach v1.0.1` とし、
 戻すときは前のタグで同じことをする（`git tag --sort=-creatordate | head -5` で戻し先を選ぶ）。
 
 ---
@@ -727,7 +778,7 @@ sudo install -m 0644 deploy/system/*.service deploy/system/*.timer /etc/systemd/
 | 1 | J1 core の一般化（#20） | implementer | — |
 | 2 | J2 時報 Bot の追加（#21） | implementer | 1 |
 | 3 | system 用 unit・notify-failure の scope 対応・この文書（#22） | implementer | 2 |
-| 4 | リリースタグ `v1.0.0` | ユーザー指示で | 3 |
+| 4 | リリースタグ `v1.0.0`（任意） | ユーザー指示で | 3 |
 | 5 | 新ホストの準備（3 章）・配置（4 章） | ユーザー | 4 |
 | 6 | 受け入れ確認 dry-run 3 日（5 章） | ユーザー | 5 |
 | 7 | 一斉切り替え（6 章） | ユーザー | 6 |
