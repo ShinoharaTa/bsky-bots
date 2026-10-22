@@ -1,3 +1,4 @@
+import { jiho } from "./bots/jiho/index.js";
 import { skyhigh } from "./bots/skyhigh/index.js";
 import { skylog } from "./bots/skylog/index.js";
 import { createAgent, createReadAgent, login } from "./core/client.js";
@@ -6,7 +7,7 @@ import { createDateBounds } from "./core/date.js";
 import { DryRunPoster, LivePoster, type Poster } from "./core/poster.js";
 import type { BotDefinition } from "./core/types.js";
 
-export const BOTS: BotDefinition[] = [skyhigh, skylog];
+export const BOTS: BotDefinition[] = [skyhigh, skylog, jiho];
 
 export interface Options {
   bot: BotDefinition;
