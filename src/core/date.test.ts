@@ -10,7 +10,7 @@ import {
 
 const DAY_MS = 86_400_000;
 
-// 期待値は moment-timezone（2.31.0 / tz 2025b）で生成した値。
+// 期待値は置き換え前の実装（tz データ 2025b）で生成した値。
 // getUTC* だけで組み立てるので process.env.TZ を変えて試す必要は無い。
 const CASES: [string, number, number, string][] = [
   [
