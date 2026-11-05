@@ -1,6 +1,7 @@
 /**
  * 任意ホスト（各ユーザーの PDS）に繋ぐので、リトライは控えめにする。
  * 相手は個人のセルフホストであることもある。連打しない。
+ * タイムアウトはリトライしない。遅い相手はリトライしても速くならない。
  */
 export interface RetryOptions {
   /** 最大リトライ回数（初回試行は含まない）。 */
@@ -107,6 +108,8 @@ export async function fetchWithRetry(
     } catch (ex) {
       // TLS ハンドシェイク失敗・名前解決失敗・タイムアウトなど。
       if (ex instanceof HttpError && !isRetriableStatus(ex.status)) throw ex;
+      // AbortSignal.timeout は DOMException を投げる。継承に依存せず name で見る。
+      if ((ex as { name?: unknown } | null)?.name === "TimeoutError") throw ex;
       lastError = ex;
     }
     if (attempt < options.maxRetries) await sleep(wait);

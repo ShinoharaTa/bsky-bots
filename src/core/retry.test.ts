@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { POST_RETRY, retryOnRateLimit } from "./retry.js";
+import {
+  DEFAULT_RETRY,
+  fetchWithRetry,
+  HttpError,
+  POST_RETRY,
+  retryOnRateLimit,
+} from "./retry.js";
 
 /** XRPCError と同じく status と headers を持った例外。 */
 function xrpcError(status: number, headers: Record<string, string> = {}) {
@@ -129,5 +135,62 @@ describe("retryOnRateLimit", () => {
       ),
     ).rejects.toThrow("xrpc 502");
     expect(calls).toBe(1);
+  });
+});
+
+describe("fetchWithRetry", () => {
+  const options = { ...DEFAULT_RETRY, baseDelayMs: 0 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("タイムアウトはリトライせず 1 回で投げる", async () => {
+    const error = new DOMException(
+      "The operation was aborted due to timeout",
+      "TimeoutError",
+    );
+    const fetchMock = vi.fn(async () => {
+      throw error;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(fetchWithRetry("https://pds.example", options)).rejects.toBe(
+      error,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("通信失敗（fetch failed）はリトライする", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      fetchWithRetry("https://pds.example", options),
+    ).rejects.toThrow("fetch failed");
+    expect(fetchMock).toHaveBeenCalledTimes(options.maxRetries + 1);
+  });
+
+  it("5xx はリトライして成功すれば本文を返す", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("busy", { status: 503 }))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      fetchWithRetry("https://pds.example", options),
+    ).resolves.toEqual({ status: 200, body: "ok" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("4xx はリトライせず HttpError を投げる", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response("not found", { status: 404 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      fetchWithRetry("https://pds.example", options),
+    ).rejects.toBeInstanceOf(HttpError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
