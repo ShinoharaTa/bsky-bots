@@ -257,7 +257,8 @@ export async function fetchFromAppView(
   maxPages: number,
   options: FeedOptions,
 ): Promise<FeedFetch> {
-  const retry = options.retry ?? DEFAULT_RETRY;
+  // 最後の経路なので、タイムアウトもリトライする（落とすとそのユーザーが集計から消える）。
+  const retry = { ...(options.retry ?? DEFAULT_RETRY), retryOnTimeout: true };
   const from = bounds.prevDay.valueOf();
   let cursor: string | undefined;
   let requests = 0;
