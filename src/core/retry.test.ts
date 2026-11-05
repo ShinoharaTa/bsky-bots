@@ -160,6 +160,23 @@ describe("fetchWithRetry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("retryOnTimeout: true ならタイムアウトもリトライする（AppView 用）", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new DOMException(
+        "The operation was aborted due to timeout",
+        "TimeoutError",
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      fetchWithRetry("https://appview.example", {
+        ...options,
+        retryOnTimeout: true,
+      }),
+    ).rejects.toThrow("timeout");
+    expect(fetchMock).toHaveBeenCalledTimes(options.maxRetries + 1);
+  });
+
   it("通信失敗（fetch failed）はリトライする", async () => {
     const fetchMock = vi.fn(async () => {
       throw new TypeError("fetch failed");
