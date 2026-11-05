@@ -51,6 +51,22 @@ node dist/tools/probe.js did:plc:bomm4rqxhepvv7uc6nm5zyyp 2026-02-14
 **`AUTHOR` / `PASSWORD` へのフォールバックは持たない**（2 Bot が 1 つの .env を共有するため、
 片方の認証情報でもう片方が投稿する事故を防ぐ）。変数が無ければ起動時に落とす。
 
+## フォロワー数について
+
+プロフィールの `followersCount` と、`getFollowers` で実際に列挙できる人数は一致しない。
+
+| アカウント | followersCount | getFollowers で列挙できた数 | 計測日 |
+| --- | ---: | ---: | --- |
+| skyhigh.bsky.social | 421 | 379 | 2026-11-05 |
+| skylog.bsky.social | 257 | 213 | 2026-11-05 |
+
+Bot が集計するのは **`getFollowers` で列挙できた人だけ**。skyhigh の「集計開始：... users: N」の N もこちら。
+プロフィール画面の数字より 1 割ほど少なく見えるのは正常で、取りこぼしではない。
+
+差の理由（推測。公式仕様に明記は無い）: `followersCount` は AppView が保持するカウンタで、
+フォローした後に凍結・削除・無効化（deactivate）されたアカウントも数に残る。
+`getFollowers` は現在存在して閲覧できるアカウントだけを返す。
+
 ## 投稿の取得経路
 
 投稿は**各ユーザーの PDS を直接読む**（`com.atproto.repo.listRecords`・認証不要）。
