@@ -1,4 +1,3 @@
-import moment from "moment-timezone";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DateBounds } from "../../core/date.js";
 import {
@@ -19,8 +18,8 @@ const NO_RETRY = {
 
 /** 対象日 2026-09-21 (JST)。 */
 const bounds: DateBounds = {
-  prevDay: moment.tz("2026-09-21", "Asia/Tokyo"),
-  today: moment.tz("2026-09-22", "Asia/Tokyo"),
+  prevDay: new Date("2026-09-21T00:00:00+09:00"),
+  today: new Date("2026-09-22T00:00:00+09:00"),
 };
 
 const DID = "did:plc:me";

@@ -1,11 +1,10 @@
-import moment from "moment-timezone";
 import { describe, expect, it } from "vitest";
 import type { Follower } from "../../core/followers.js";
 import { utf8Length } from "../../core/richtext.js";
 import type { ActivityCounts } from "./aggregate.js";
 import { formatUser } from "./format.js";
 
-const prevDay = moment.tz("2026-09-21", "Asia/Tokyo");
+const prevDay = new Date("2026-09-21T00:00:00+09:00");
 const counts: ActivityCounts = { posts: 147, reposts: 37, replys: 48 };
 
 function follower(over: Partial<Follower>): Follower {

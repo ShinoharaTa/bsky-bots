@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { hostname } from "node:os";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { nowJst } from "../core/date.js";
+import { formatJstDateTime } from "../core/date.js";
 
 /**
  * Bot の unit が失敗したことを Discord webhook に知らせる。
@@ -23,7 +23,6 @@ const LOG_LINES = 30;
 const REQUEST_TIMEOUT_MS = 15_000;
 /** 429 の Retry-After をこれ以上は待たない（unit の TimeoutStartSec に収める）。 */
 const MAX_RETRY_AFTER_MS = 60_000;
-const TIME_FORMAT = "YYYY/MM/DD HH:mm:ss";
 
 export interface UnitStatus {
   result: string;
@@ -255,7 +254,7 @@ const defaultDeps: Deps = {
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   stderr: (line) => console.error(line),
   host: () => hostname(),
-  now: () => nowJst().format(TIME_FORMAT),
+  now: () => formatJstDateTime(Date.now()),
 };
 
 // テストから import したときは実行しない。

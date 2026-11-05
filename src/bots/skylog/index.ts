@@ -1,5 +1,5 @@
 import { DEFAULT_ABORT_POLICY, FailureTracker } from "../../core/abort.js";
-import { nowJst } from "../../core/date.js";
+import { formatJstDateTime } from "../../core/date.js";
 import { DEFAULT_FEED_LIMITS, fetchFeed } from "../../core/feed.js";
 import { getFollowers } from "../../core/followers.js";
 import { describeError } from "../../core/retry.js";
@@ -11,7 +11,6 @@ import type {
 import { type ActivityCounts, countActivity } from "./aggregate.js";
 import { formatEnd, formatIntro, formatStart, formatUser } from "./format.js";
 
-const TIME_FORMAT = "YYYY/MM/DD HH:mm:ss";
 /** この件数未満の投稿しかないユーザーは投稿しない。 */
 const MIN_POSTS = 10;
 
@@ -34,7 +33,7 @@ export const skylog: AggregateBotDefinition = {
         tracker,
       },
       async () => {
-        let time = nowJst().format(TIME_FORMAT);
+        let time = formatJstDateTime(Date.now());
         await poster.post(formatStart(time));
         const users = await getFollowers(
           ctx.agent,
@@ -90,7 +89,7 @@ export const skylog: AggregateBotDefinition = {
         // 閾値未満で返信しなかった人も取得には成功しているので成功に数える。
         tracker.assertAnyFetched();
 
-        time = nowJst().format(TIME_FORMAT);
+        time = formatJstDateTime(Date.now());
         await poster.post(formatEnd(time));
       },
     );
