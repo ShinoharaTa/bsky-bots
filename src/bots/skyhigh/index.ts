@@ -1,5 +1,5 @@
 import { DEFAULT_ABORT_POLICY, FailureTracker } from "../../core/abort.js";
-import { nowJst } from "../../core/date.js";
+import { formatJstDateTime } from "../../core/date.js";
 import { DEFAULT_FEED_LIMITS, fetchFeed } from "../../core/feed.js";
 import { type Follower, getFollowers } from "../../core/followers.js";
 import { describeError } from "../../core/retry.js";
@@ -16,8 +16,6 @@ import {
   formatStart,
   type UserPosts,
 } from "./format.js";
-
-const TIME_FORMAT = "YYYY/MM/DD HH:mm:ss";
 
 const getUserPosts = async (
   ctx: AggregateContext,
@@ -73,7 +71,7 @@ export const skyhigh: AggregateBotDefinition = {
         tracker,
       },
       async () => {
-        let time = nowJst().format(TIME_FORMAT);
+        let time = formatJstDateTime(Date.now());
         const users = await getFollowers(
           ctx.agent,
           ctx.actor,
@@ -99,7 +97,7 @@ export const skyhigh: AggregateBotDefinition = {
         // 投稿後の定型文投稿
         await poster.post(formatNotice());
 
-        time = nowJst().format(TIME_FORMAT);
+        time = formatJstDateTime(Date.now());
         await poster.post(formatEnd(time));
 
         const missing = posts.filter((item) => item.posts === 0);

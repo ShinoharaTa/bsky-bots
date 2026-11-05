@@ -1,4 +1,4 @@
-import type moment from "moment-timezone";
+import { formatJstDate } from "../../core/date.js";
 import { hasVisibleText, isResolvableHandle } from "../../core/display.js";
 
 export interface UserPosts {
@@ -21,13 +21,8 @@ export function formatStart(time: string, userCount: number): string {
   return `集計開始：${time} users: ${userCount}`;
 }
 
-export function formatRanking(
-  sorted: UserPosts[],
-  prevDay: moment.Moment,
-): string {
-  let text = `【すか廃ランキング ${prevDay.format(
-    "YYYY/MM/DD",
-  )}】#skyhighrank\n`;
+export function formatRanking(sorted: UserPosts[], prevDay: Date): string {
+  let text = `【すか廃ランキング ${formatJstDate(prevDay)}】#skyhighrank\n`;
   for (let index = 0; index < sorted.length; index++) {
     if (index >= 10) break;
     let record = index === 0 ? "👑：" : `${index + 1}位：`;
