@@ -64,7 +64,7 @@ node dist/tools/probe.js did:plc:bomm4rqxhepvv7uc6nm5zyyp 2026-02-14
 
 PDS は任意のホストなので落ちていることがある（実例: `at.soverth.blue` は TLS ハンドシェイクで失敗）。
 
-- per-host タイムアウト 10 秒 + 429/5xx の指数バックオフ（`core/retry.ts`。`Retry-After` を尊重）
+- per-host タイムアウト 10 秒（**PDS がタイムアウトしたらリトライせず AppView へ。AppView はタイムアウトもリトライ**）+ 429/5xx の指数バックオフ（`core/retry.ts`。`Retry-After` を尊重）
 - PDS が駄目なら AppView（`getAuthorFeed`）にフォールバック
 - どちらも駄目ならそのユーザーだけスキップして stderr に出す。**失敗を投稿しない**
 
