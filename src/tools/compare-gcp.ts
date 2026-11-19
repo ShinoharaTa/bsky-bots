@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import moment from "moment-timezone";
 import { PUBLIC_SERVICE } from "../core/client.js";
-import { TIMEZONE } from "../core/date.js";
+import { formatJstDate, parseJstDate, startOfJstDay } from "../core/date.js";
 import { fetchJson } from "../core/retry.js";
 
 /**
@@ -228,7 +227,7 @@ interface FollowersResponse {
 /** 対象日の翌日（JST）以降に Bot が投稿したものを新しい順に遡る。 */
 async function fetchBotPosts(
   bot: BotName,
-  since: moment.Moment,
+  since: Date,
   filter: "posts_no_replies" | "posts_with_replies",
 ): Promise<Post[]> {
   const posts: Post[] = [];
@@ -294,7 +293,7 @@ function probeCommand(did: string, day: string): string {
   return `node dist/tools/probe.js ${did} ${day.replaceAll("/", "-")}`;
 }
 
-async function runSkylog(file: string, day: string, since: moment.Moment) {
+async function runSkylog(file: string, day: string, since: Date) {
   const newItems = readDryRun(readFileSync(file, "utf8"))
     .map((post) => parseSkylogPost(post, day))
     .filter((item): item is SkylogCounts => item !== null);
@@ -331,7 +330,7 @@ async function runSkylog(file: string, day: string, since: moment.Moment) {
   );
 }
 
-async function runSkyhigh(file: string, day: string, since: moment.Moment) {
+async function runSkyhigh(file: string, day: string, since: Date) {
   const newRanking = readDryRun(readFileSync(file, "utf8"))
     .map((post) => parseRanking(post.text, day))
     .find((item) => item !== null);
@@ -392,12 +391,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const target = dayArg
-    ? moment.tz(dayArg, "YYYY-MM-DD", TIMEZONE)
-    : moment().tz(TIMEZONE).subtract(1, "days");
-  if (!target.isValid()) throw new Error(`invalid date: ${dayArg}`);
-  const day = target.format("YYYY/MM/DD");
+    ? parseJstDate(dayArg)
+    : startOfJstDay(Date.now() - 24 * 60 * 60 * 1000);
+  if (!target) throw new Error(`invalid date: ${dayArg}`);
+  const day = formatJstDate(target);
   // GCP は対象日の翌日に投稿する。
-  const since = target.clone().startOf("day").add(1, "days");
+  const since = new Date(startOfJstDay(target).getTime() + 24 * 60 * 60 * 1000);
   if (bot === "skylog") await runSkylog(file, day, since);
   else await runSkyhigh(file, day, since);
 }

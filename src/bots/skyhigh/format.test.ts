@@ -1,8 +1,7 @@
-import moment from "moment-timezone";
 import { describe, expect, it } from "vitest";
 import { formatRanking, rankingNameOf, type UserPosts } from "./format.js";
 
-const prevDay = moment.tz("2026-09-21", "Asia/Tokyo");
+const prevDay = new Date("2026-09-21T00:00:00+09:00");
 
 function user(over: Partial<UserPosts>): UserPosts {
   return {

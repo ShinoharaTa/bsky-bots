@@ -1,5 +1,9 @@
-import moment from "moment-timezone";
-import { type DateBounds, TIMEZONE } from "../core/date.js";
+import {
+  type DateBounds,
+  formatJstDateTime,
+  parseJstDate,
+  startOfJstDay,
+} from "../core/date.js";
 import {
   DEFAULT_FEED_LIMITS,
   type FeedFetch,
@@ -17,8 +21,6 @@ import { describeError } from "../core/retry.js";
  * 読み取り専用の検証ツール。投稿処理は持たない。
  * usage: node dist/tools/probe.js <handle|did> [YYYY-MM-DD(JST, 既定=前日)]
  */
-const TIME_FORMAT = "YYYY/MM/DD HH:mm:ss";
-
 function usage(): void {
   console.error(
     "Usage: node dist/tools/probe.js <handle|did> [YYYY-MM-DD(JST)]",
@@ -27,12 +29,14 @@ function usage(): void {
 
 /** 対象日（JST）の 00:00 以上 翌 00:00 未満。 */
 function boundsForDay(day: string | undefined): DateBounds {
-  const base = day
-    ? moment.tz(day, "YYYY-MM-DD", TIMEZONE)
-    : moment().tz(TIMEZONE).subtract(1, "days");
-  if (!base.isValid()) throw new Error(`invalid date: ${day}`);
-  const prevDay = base.clone().startOf("day");
-  return { prevDay, today: prevDay.clone().add(1, "days") };
+  const prevDay = day
+    ? parseJstDate(day)
+    : startOfJstDay(Date.now() - 24 * 60 * 60 * 1000);
+  if (!prevDay) throw new Error(`invalid date: ${day}`);
+  return {
+    prevDay,
+    today: new Date(prevDay.getTime() + 24 * 60 * 60 * 1000),
+  };
 }
 
 function kb(bytes: number): string {
@@ -62,7 +66,7 @@ async function main(): Promise<void> {
   }
   const bounds = boundsForDay(process.argv[3]);
   console.log(
-    `対象日(JST): ${bounds.prevDay.format(TIME_FORMAT)} 〜 ${bounds.today.format(TIME_FORMAT)}`,
+    `対象日(JST): ${formatJstDateTime(bounds.prevDay)} 〜 ${formatJstDateTime(bounds.today)}`,
   );
 
   const did = await toDid(actor);

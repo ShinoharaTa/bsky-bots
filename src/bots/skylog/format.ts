@@ -1,4 +1,4 @@
-import type moment from "moment-timezone";
+import { formatJstDate } from "../../core/date.js";
 import { hasVisibleText, isResolvableHandle } from "../../core/display.js";
 import type { Follower } from "../../core/followers.js";
 import {
@@ -33,14 +33,14 @@ function displayTextOf(user: Follower): string {
 
 export function formatUser(
   user: Follower,
-  prevDay: moment.Moment,
+  prevDay: Date,
   counts: ActivityCounts,
 ): PostContent {
   const { posts, reposts, replys } = counts;
   const resolvable = isResolvableHandle(user.handle);
   const mention = `@${resolvable ? user.handle : displayTextOf(user)}`;
   let text = `${mention}さんの集計データ\n`;
-  text += `${prevDay.format("YYYY/MM/DD")}#skylog\n`;
+  text += `${formatJstDate(prevDay)}#skylog\n`;
   text += "\n";
   text += `今日の累計　　：${posts + reposts}\n`;
   text += "-------- 内訳 --------\n";

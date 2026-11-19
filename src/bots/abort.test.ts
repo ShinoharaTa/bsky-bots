@@ -48,7 +48,7 @@ function fakeAgent(prefix: string, count: number): AtpAgent {
   } as unknown as AtpAgent;
 }
 
-const bounds = createDateBounds("2026-09-22T12:00:00+09:00");
+const bounds = createDateBounds(new Date("2026-09-22T12:00:00+09:00"));
 
 function context(agent: AtpAgent, poster: Poster): AggregateContext {
   return { agent, poster, actor: "bot.test", bounds };
