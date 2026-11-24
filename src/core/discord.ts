@@ -40,9 +40,23 @@ function escapeFence(text: string): string {
 }
 
 /**
- * Discord に送る本文を組み立てる。
+ * 見出しとログのコードブロックから本文を組み立てる。
  * 上限を超えるときはログの**先頭側**を削る（原因は末尾にあることが多い）。
  */
+export function buildCodeBlockMessage(header: string, rawLog: string): string {
+  const open = "\n```\n";
+  const close = "\n```";
+  const marker = "...(truncated)\n";
+  let log = escapeFence(rawLog.trimEnd()) || "(no log)";
+  const budget =
+    DISCORD_MAX_LENGTH - header.length - open.length - close.length;
+  if (log.length > budget) {
+    log = marker + log.slice(log.length - (budget - marker.length));
+  }
+  return `${header}${open}${log}${close}`.slice(0, DISCORD_MAX_LENGTH);
+}
+
+/** systemd の unit の失敗を知らせる本文。 */
 export function buildMessage(report: FailureReport): string {
   const status = `Result=${report.status.result || "?"} / ExecMainStatus=${report.status.execMainStatus || "?"}`;
   const header = [
@@ -51,16 +65,7 @@ export function buildMessage(report: FailureReport): string {
     `time: ${report.time} JST`,
     status,
   ].join("\n");
-  const open = "\n```\n";
-  const close = "\n```";
-  const marker = "...(truncated)\n";
-  let log = escapeFence(report.log.trimEnd()) || "(no log)";
-  const budget =
-    DISCORD_MAX_LENGTH - header.length - open.length - close.length;
-  if (log.length > budget) {
-    log = marker + log.slice(log.length - (budget - marker.length));
-  }
-  return `${header}${open}${log}${close}`.slice(0, DISCORD_MAX_LENGTH);
+  return buildCodeBlockMessage(header, report.log);
 }
 
 /** 文字列に含まれる webhook URL を伏せる。エラーメッセージに紛れた場合の保険。 */

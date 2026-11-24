@@ -1,0 +1,415 @@
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter, once } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { checkHealth } from "./healthcheck.js";
+import { type Scheduler, type SchedulerDeps, startScheduler } from "./main.js";
+import { readState } from "./state.js";
+
+/** 実在しない URL。fetch を差し替えるので送信はしない。 */
+const WEBHOOK = "https://discord.example/api/webhooks/123/secret-token-xyz";
+const PASSWORD = "abcd-efgh-ijkl-mnop";
+
+class FakeChild extends EventEmitter {
+  stdout = new PassThrough();
+  stderr = new PassThrough();
+  pid: number | undefined = 4242;
+  kill = vi.fn((_signal?: NodeJS.Signals) => true);
+
+  async close(code: number | null, signal: NodeJS.Signals | null = null) {
+    const ended = Promise.all([
+      once(this.stdout, "end"),
+      once(this.stderr, "end"),
+    ]);
+    this.stdout.end();
+    this.stderr.end();
+    await ended;
+    this.emit("close", code, signal);
+  }
+}
+
+let stateDir: string;
+const started: Scheduler[] = [];
+
+beforeEach(() => {
+  stateDir = mkdtempSync(join(tmpdir(), "scheduler-test-"));
+  // 2026-11-24 09:00:00 JST
+  vi.useFakeTimers({ now: new Date("2026-11-24T00:00:00Z") });
+});
+
+afterEach(() => {
+  for (const scheduler of started.splice(0)) void scheduler.shutdown("test");
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  rmSync(stateDir, { recursive: true, force: true });
+});
+
+function setup(env: NodeJS.ProcessEnv, random = () => 0) {
+  const children: FakeChild[] = [];
+  const spawn = vi.fn(
+    (_command: string, _args: readonly string[], _options: object) => {
+      const child = new FakeChild();
+      children.push(child);
+      return child as unknown as ChildProcess;
+    },
+  );
+  const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+  const sleep = vi.fn(
+    (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  );
+  const out: string[] = [];
+  const err: string[] = [];
+  const deps: SchedulerDeps = {
+    env: { STATE_DIR: stateDir, ...env },
+    spawn,
+    stdout: (text) => out.push(text),
+    stderr: (text) => err.push(text),
+    now: () => Date.now(),
+    random,
+    fetch: fetchMock as unknown as typeof fetch,
+    sleep,
+    cwd: "/app",
+  };
+  const scheduler = startScheduler(deps);
+  if (scheduler) started.push(scheduler);
+  const log = () => err.join("");
+  /** 送った Discord 本文。 */
+  const contents = () =>
+    fetchMock.mock.calls.map(
+      (call) =>
+        JSON.parse((call as unknown as [string, RequestInit])[1].body as string)
+          .content as string,
+    );
+  return {
+    scheduler,
+    spawn,
+    children,
+    fetchMock,
+    sleep,
+    out,
+    err,
+    log,
+    contents,
+  };
+}
+
+/** 毎秒起動する設定（dry-run 用の上書き）。 */
+function everySecond(job: string): NodeJS.ProcessEnv {
+  const name = job.toUpperCase();
+  return {
+    BOT_JOBS: job,
+    [`JOB_CRON_${name}`]: "* * * * * *",
+    [`JOB_JITTER_${name}`]: "0",
+  };
+}
+
+describe("起動時の検証", () => {
+  it("BOT_MODE 未設定なら dry-run。子は --live 無しで起動する", async () => {
+    const { scheduler, spawn, log } = setup(everySecond("skyhigh"));
+    expect(scheduler).not.toBeNull();
+    expect(log()).toContain(
+      "[scheduler] start mode=dry-run jobs=skyhigh service=bsky-bots env=production\n",
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn.mock.calls[0][0]).toBe(process.execPath);
+    expect(spawn.mock.calls[0][1]).toEqual(["dist/main.js", "skyhigh"]);
+    expect(spawn.mock.calls[0][2]).toMatchObject({ cwd: "/app" });
+  });
+
+  it("BOT_MODE=live なら --live を付け、MODE=LIVE の行を出す", async () => {
+    // 2026-11-24 09:26:59 JST。上書きは使えないので本来の枠（:27）を待つ。
+    vi.setSystemTime(new Date("2026-11-24T00:26:59Z"));
+    const { scheduler, spawn, log } = setup({
+      BOT_MODE: "live",
+      BOT_JOBS: "jiho",
+      JIHO_IDENTIFIER: "jiho.test",
+      JIHO_APP_PASSWORD: PASSWORD,
+    });
+    expect(scheduler).not.toBeNull();
+    expect(log()).toContain("[scheduler] MODE=LIVE jobs=jiho\n");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn.mock.calls[0][1]).toEqual(["dist/main.js", "jiho", "--live"]);
+  });
+
+  it("live で JOB_* の上書きがあれば起動しない", () => {
+    const { scheduler, log } = setup({
+      BOT_MODE: "live",
+      BOT_JOBS: "jiho",
+      JIHO_IDENTIFIER: "jiho.test",
+      JIHO_APP_PASSWORD: PASSWORD,
+      JOB_CRON_JIHO: "* * * * *",
+    });
+    expect(scheduler).toBeNull();
+    expect(log()).toContain("JOB_CRON_JIHO");
+  });
+
+  it("未知のジョブ名があれば起動しない", () => {
+    const { scheduler, log } = setup({ BOT_JOBS: "jiho,foo" });
+    expect(scheduler).toBeNull();
+    expect(log()).toContain("unknown job in BOT_JOBS: foo");
+  });
+
+  it("BOT_MODE が dry-run / live 以外なら起動しない", () => {
+    expect(setup({ BOT_MODE: "production" }).scheduler).toBeNull();
+  });
+
+  it("live で認証情報が欠けていれば起動しない", () => {
+    const { scheduler, log } = setup({
+      BOT_MODE: "live",
+      BOT_JOBS: "skyhigh",
+      SKYHIGH_IDENTIFIER: "skyhigh.test",
+    });
+    expect(scheduler).toBeNull();
+    expect(log()).toContain("SKYHIGH_APP_PASSWORD is not set");
+  });
+
+  it("STATE_DIR に書けなければ起動しない", () => {
+    const { scheduler } = setup({
+      BOT_JOBS: "jiho",
+      STATE_DIR: join(stateDir, "missing"),
+    });
+    expect(scheduler).toBeNull();
+  });
+
+  it("BOT_JOBS が空なら何も登録せず WARN を出して ready になる", () => {
+    const { scheduler, log } = setup({});
+    expect(scheduler).not.toBeNull();
+    expect(log()).toContain("warn: BOT_JOBS is empty");
+    expect(readState(stateDir)).toMatchObject({ ready: true, jobs: [] });
+  });
+
+  it("webhook が未設定なら、通知するジョブがあるときだけ WARN を出す", () => {
+    expect(setup({ BOT_JOBS: "jiho" }).log()).not.toContain(
+      "DISCORD_WEBHOOK_URL",
+    );
+    expect(setup({ BOT_JOBS: "skylog" }).log()).toContain(
+      "warn: DISCORD_WEBHOOK_URL is not set",
+    );
+  });
+});
+
+describe("スケジュール", () => {
+  for (const tz of ["UTC", "America/New_York"]) {
+    it(`次回は JST 08:45 / 00:20 / :27（TZ=${tz} でも同じ UTC 時刻）`, () => {
+      const saved = process.env.TZ;
+      process.env.TZ = tz;
+      try {
+        const { scheduler } = setup({ BOT_JOBS: "skyhigh,skylog,jiho" });
+        const next = Object.fromEntries(
+          scheduler?.snapshot().jobs.map((job) => [job.name, job.next]) ?? [],
+        );
+        expect(next).toEqual({
+          skyhigh: "2026-11-24T23:45:00.000Z",
+          skylog: "2026-11-24T15:20:00.000Z",
+          jiho: "2026-11-24T00:27:00.000Z",
+        });
+      } finally {
+        if (saved === undefined) delete process.env.TZ;
+        else process.env.TZ = saved;
+      }
+    });
+  }
+
+  it("jiho は :57 にも起動する", () => {
+    vi.setSystemTime(new Date("2026-11-24T00:30:00Z"));
+    const { scheduler } = setup({ BOT_JOBS: "jiho" });
+    expect(scheduler?.snapshot().jobs[0].next).toBe("2026-11-24T00:57:00.000Z");
+  });
+
+  it("jiho の遅延は 0〜360 秒（乱数を注入）", async () => {
+    vi.setSystemTime(new Date("2026-11-24T00:26:59Z"));
+    const { spawn, sleep } = setup({ BOT_JOBS: "jiho" }, () => 0.999999);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    const delay = sleep.mock.calls[0][0];
+    expect(delay).toBeGreaterThanOrEqual(0);
+    expect(delay).toBeLessThanOrEqual(360_000);
+    expect(spawn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(delay);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("jiho の遅延は乱数 0.5 で 180 秒", async () => {
+    vi.setSystemTime(new Date("2026-11-24T00:26:59Z"));
+    const { sleep } = setup({ BOT_JOBS: "jiho" }, () => 0.5);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sleep).toHaveBeenCalledWith(180_000);
+  });
+
+  it("前回が実行中なら次の枠は起動せず skipped reason=overlap を出す", async () => {
+    const { spawn, children, log } = setup(everySecond("skyhigh"));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(log()).toContain("[scheduler] skipped job=skyhigh reason=overlap\n");
+    await children[0].close(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("run / done の行に job と run_id を付ける", async () => {
+    const { children, log } = setup(everySecond("skyhigh"));
+    await vi.advanceTimersByTimeAsync(1000);
+    await children[0].close(0);
+    await vi.advanceTimersByTimeAsync(0);
+    const runId = "skyhigh-2026-11-24T00:00:01.000Z";
+    expect(log()).toContain(`[scheduler] run job=skyhigh run_id=${runId}\n`);
+    expect(log()).toContain(
+      `[scheduler] done job=skyhigh run_id=${runId} exit=0 signal=none timeout=false elapsed=0.0s\n`,
+    );
+  });
+});
+
+describe("失敗の通知", () => {
+  const notifyEnv = {
+    DISCORD_WEBHOOK_URL: WEBHOOK,
+    NOTIFY_IN_DRY_RUN: "true",
+    SKYHIGH_APP_PASSWORD: PASSWORD,
+  };
+
+  it("timeout なら SIGTERM → 10 秒後に SIGKILL。通知に stderr の末尾が入る", async () => {
+    const { children, fetchMock, contents, log } = setup({
+      ...everySecond("skyhigh"),
+      ...notifyEnv,
+      JOB_TIMEOUT_SKYHIGH: "5",
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    children[0].stderr.write("still fetching followers\n");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(children[0].kill).toHaveBeenLastCalledWith("SIGTERM");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(children[0].kill).toHaveBeenLastCalledWith("SIGKILL");
+    await children[0].close(null, "SIGKILL");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(log()).toMatch(/done job=skyhigh .* timeout=true /);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(contents()[0]).toContain("timeout=true");
+    expect(contents()[0]).toContain("still fetching followers");
+  });
+
+  it("exit 1 なら exit=1 と stderr の末尾 30 行を送る。App Password は含めない", async () => {
+    const { children, fetchMock, contents } = setup({
+      ...everySecond("skyhigh"),
+      ...notifyEnv,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    for (let i = 1; i <= 40; i++) {
+      children[0].stderr.write(`err line ${i} password=${PASSWORD}\n`);
+    }
+    await children[0].close(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]).toContain(WEBHOOK);
+    const content = contents()[0];
+    expect(content).toContain("**bsky-bots: skyhigh failed**");
+    expect(content).toContain("run_id: skyhigh-2026-11-24T00:00:01.000Z");
+    expect(content).toContain("time: 2026/11/24 09:00:01 JST");
+    expect(content).toContain("exit=1");
+    expect(content).toContain("err line 11 ");
+    expect(content).toContain("err line 40 ");
+    expect(content).not.toContain("err line 10 ");
+    expect(content).not.toContain(PASSWORD);
+  });
+
+  it("dry-run では送らず would notify を出す", async () => {
+    const { children, fetchMock, log } = setup({
+      ...everySecond("skyhigh"),
+      DISCORD_WEBHOOK_URL: WEBHOOK,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await children[0].close(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(log()).toMatch(
+      /\[scheduler\] would notify job=skyhigh run_id=skyhigh-\S+\n/,
+    );
+    expect(log()).not.toContain(WEBHOOK);
+  });
+
+  it("jiho の失敗は通知しない", async () => {
+    const { children, fetchMock, log } = setup({
+      ...everySecond("jiho"),
+      ...notifyEnv,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await children[0].close(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(log()).not.toContain("would notify");
+  });
+
+  it("成功なら通知しない", async () => {
+    const { children, fetchMock } = setup({
+      ...everySecond("skyhigh"),
+      ...notifyEnv,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await children[0].close(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("SIGTERM", () => {
+  it("子がいなければすぐ 0 で終わる", async () => {
+    const { scheduler } = setup(everySecond("skyhigh"));
+    await expect(scheduler?.shutdown("SIGTERM")).resolves.toBe(0);
+  });
+
+  it("子がいれば、シグナルを転送せず終了を待つ。その間は新しく起動しない", async () => {
+    const { scheduler, spawn, children } = setup(everySecond("skyhigh"));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    let code: number | undefined;
+    void scheduler?.shutdown("SIGTERM").then((value) => {
+      code = value;
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(code).toBeUndefined();
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(children[0].kill).not.toHaveBeenCalled();
+    await children[0].close(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(code).toBe(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("jitter の待ち中に止めたら、待ち明けに起動しない", async () => {
+    vi.setSystemTime(new Date("2026-11-24T00:26:59Z"));
+    const { scheduler, spawn } = setup({ BOT_JOBS: "jiho" }, () => 0.5);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(scheduler?.shutdown("SIGTERM")).resolves.toBe(0);
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe("状態ファイルと healthcheck", () => {
+  it("30 秒ごとに更新され、新しければ healthy。120 秒古ければ unhealthy", async () => {
+    setup(everySecond("skyhigh"));
+    const first = readState(stateDir);
+    expect(first).toMatchObject({ ready: true, mode: "dry-run" });
+    await vi.advanceTimersByTimeAsync(30_000);
+    const second = readState(stateDir);
+    expect(second?.ts).toBe(Date.now());
+    expect(second?.ts).toBeGreaterThan(first?.ts ?? 0);
+    expect(second?.jobs[0]).toMatchObject({
+      name: "skyhigh",
+      running: true,
+      lastRunAt: "2026-11-24T00:00:01.000Z",
+    });
+    expect(checkHealth(stateDir, Date.now())).toBe(true);
+    expect(checkHealth(stateDir, (second?.ts ?? 0) + 120_000)).toBe(false);
+  });
+
+  it("状態ファイルが無ければ unhealthy", () => {
+    expect(checkHealth(stateDir, Date.now())).toBe(false);
+  });
+});
