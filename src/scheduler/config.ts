@@ -1,4 +1,5 @@
 import { JOBS, type JobDefinition } from "./jobs.js";
+import type { LogFormat, LogLevel } from "./logline.js";
 
 /**
  * 環境変数の読み取りと検証。不正な値は ConfigError を投げ、起動させない。
@@ -19,6 +20,9 @@ export interface SchedulerConfig {
   notifyInDryRun: boolean;
   /** 伏字にする値（*_APP_PASSWORD と DISCORD_WEBHOOK_URL）。 */
   secrets: string[];
+  logFormat: LogFormat;
+  /** スケジューラ自身の行にだけ効かせる。子の出力は落とさない。 */
+  logLevel: LogLevel;
 }
 
 export class ConfigError extends Error {}
@@ -31,6 +35,18 @@ function parseMode(value: string | undefined): BotMode {
   }
   if (value === "live") return "live";
   throw new ConfigError(`invalid BOT_MODE: ${value} (dry-run or live)`);
+}
+
+export function parseLogFormat(value: string | undefined): LogFormat {
+  if (value === undefined || value === "" || value === "text") return "text";
+  if (value === "json") return "json";
+  throw new ConfigError(`invalid LOG_FORMAT: ${value} (text or json)`);
+}
+
+function parseLogLevel(value: string | undefined): LogLevel {
+  if (value === undefined || value === "") return "info";
+  if (value === "debug" || value === "info" || value === "warn") return value;
+  throw new ConfigError(`invalid LOG_LEVEL: ${value} (debug, info or warn)`);
 }
 
 function parseJobNames(value: string | undefined): string[] {
@@ -90,6 +106,8 @@ function collectSecrets(env: NodeJS.ProcessEnv): string[] {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): SchedulerConfig {
+  const logFormat = parseLogFormat(env.LOG_FORMAT);
+  const logLevel = parseLogLevel(env.LOG_LEVEL);
   const mode = parseMode(env.BOT_MODE);
   const names = parseJobNames(env.BOT_JOBS);
 
@@ -124,5 +142,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): SchedulerConfig {
     webhookUrl: env.DISCORD_WEBHOOK_URL ?? "",
     notifyInDryRun: env.NOTIFY_IN_DRY_RUN === "true",
     secrets: collectSecrets(env),
+    logFormat,
+    logLevel,
   };
 }

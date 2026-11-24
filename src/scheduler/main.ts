@@ -6,13 +6,25 @@ import { buildCodeBlockMessage, postWebhook } from "../core/discord.js";
 import { ConfigError, loadConfig, type SchedulerConfig } from "./config.js";
 import { JOB_TIMEZONE, type JobDefinition } from "./jobs.js";
 import {
+  childLevel,
   createRedactor,
   type Fields,
+  formatJsonLine,
   formatSchedulerLine,
+  formatSchedulerMsg,
+  isLevelEnabled,
+  type LogFormat,
+  type LogLevel,
   type Redactor,
+  schedulerLevel,
 } from "./logline.js";
 import { isFailure, type RunResult, runJob, type SpawnFn } from "./runner.js";
-import { type JobState, type SchedulerState, writeState } from "./state.js";
+import {
+  type JobState,
+  type SchedulerState,
+  statePath,
+  writeState,
+} from "./state.js";
 
 /**
  * Bot を定期実行する常駐プロセス（Coolify 用）。
@@ -98,9 +110,58 @@ function resultLine(result: RunResult): string {
 /** 起動に失敗したら null（理由は stderr に出してある）。 */
 export function startScheduler(deps: SchedulerDeps): Scheduler | null {
   let redact: Redactor = createRedactor([]);
-  const log = (msg: string, fields?: Fields) => {
-    deps.stderr(`${redact(formatSchedulerLine(msg, fields))}\n`);
+  // 設定を読むまでの行（設定のエラー）は、LOG_FORMAT=json のときだけ json にする。
+  let format: LogFormat = deps.env.LOG_FORMAT === "json" ? "json" : "text";
+  let minLevel: LogLevel = "info";
+  let service = deps.env.SERVICE_NAME || "bsky-bots";
+  let appEnv = deps.env.APP_ENV || "production";
+
+  /** スケジューラ自身の行。text は stderr、json は stdout。 */
+  const log = (
+    msg: string,
+    fields?: Fields,
+    level: LogLevel = schedulerLevel(msg),
+  ) => {
+    if (!isLevelEnabled(level, minLevel)) return;
+    if (format === "text") {
+      deps.stderr(`${redact(formatSchedulerLine(msg, fields))}\n`);
+      return;
+    }
+    const job = fields?.job;
+    const runId = fields?.run_id;
+    const line = formatJsonLine({
+      ts: deps.now(),
+      level,
+      service,
+      env: appEnv,
+      job: job === undefined || job === null ? undefined : String(job),
+      run_id: runId === undefined || runId === null ? undefined : String(runId),
+      stream: "scheduler",
+      msg: redact(formatSchedulerMsg(msg, fields)),
+    });
+    deps.stdout(`${line}\n`);
   };
+
+  /**
+   * json のときの子の行の転送先。runner は 1 回の呼び出しで 1 行
+   * （伏字済み。最後の行だけ改行が無いことがある）を渡してくる。
+   */
+  const childJson =
+    (stream: "stdout" | "stderr", job: string, runId: string) =>
+    (text: string) => {
+      const msg = text.endsWith("\n") ? text.slice(0, -1) : text;
+      const line = formatJsonLine({
+        ts: deps.now(),
+        level: childLevel(job, msg),
+        service,
+        env: appEnv,
+        job,
+        run_id: runId,
+        stream,
+        msg,
+      });
+      deps.stdout(`${line}\n`);
+    };
 
   let config: SchedulerConfig;
   try {
@@ -111,6 +172,9 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
     return null;
   }
   redact = createRedactor(config.secrets);
+  format = config.logFormat;
+  service = config.serviceName;
+  appEnv = config.appEnv;
   const live = config.mode === "live";
   const jobNames = config.jobs.map((job) => job.name).join(",") || "none";
 
@@ -124,6 +188,8 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
       env: config.appEnv,
     });
   }
+  // 起動行（MODE=LIVE の監査に使う）は LOG_LEVEL に関わらず出し、ここから絞る。
+  minLevel = config.logLevel;
   if (config.jobs.length === 0) {
     log("warn: BOT_JOBS is empty; no jobs are scheduled");
   }
@@ -152,7 +218,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
     await postWebhook(config.webhookUrl, redact(content), {
       fetch: deps.fetch,
       sleep: deps.sleep,
-      stderr: (line) => log(line, { job: job.name, run_id: runId }),
+      stderr: (line) => log(line, { job: job.name, run_id: runId }, "warn"),
     });
   };
 
@@ -169,8 +235,10 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
       timeoutMs: job.timeoutSec * 1000,
       spawn: deps.spawn,
       redact,
-      stdout: deps.stdout,
-      stderr: deps.stderr,
+      stdout:
+        format === "json" ? childJson("stdout", job.name, runId) : deps.stdout,
+      stderr:
+        format === "json" ? childJson("stderr", job.name, runId) : deps.stderr,
       now: deps.now,
     });
     state.running = false;
@@ -187,6 +255,10 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
 
   const tick = async (entry: JobEntry) => {
     const delayMs = Math.floor(deps.random() * entry.job.jitterSec * 1000);
+    log("debug: tick", {
+      job: entry.job.name,
+      jitter: `${(delayMs / 1000).toFixed(1)}s`,
+    });
     if (delayMs > 0) await deps.sleep(delayMs);
     if (stopping) return;
     const run = execute(entry);
@@ -239,8 +311,13 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
     })),
   });
 
-  try {
+  const saveState = () => {
     writeState(config.stateDir, snapshot());
+    log("debug: state written", { path: statePath(config.stateDir) });
+  };
+
+  try {
+    saveState();
   } catch (ex) {
     for (const entry of entries) entry.cron.stop();
     log(`error: cannot write state to ${config.stateDir}: ${ex}`);
@@ -248,7 +325,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
   }
   const stateTimer = setInterval(() => {
     try {
-      writeState(config.stateDir, snapshot());
+      saveState();
     } catch (ex) {
       log(`error: cannot write state to ${config.stateDir}: ${ex}`);
     }

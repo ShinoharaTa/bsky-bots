@@ -413,3 +413,142 @@ describe("状態ファイルと healthcheck", () => {
     expect(checkHealth(stateDir, Date.now())).toBe(false);
   });
 });
+
+describe("ログの形式", () => {
+  /** 同じ入力（起動 → 子の出力 → 失敗 → 停止）を流し、出力を集める。 */
+  async function scenario(env: NodeJS.ProcessEnv) {
+    const { scheduler, children, out, err } = setup({
+      ...everySecond("skyhigh"),
+      SKYHIGH_APP_PASSWORD: PASSWORD,
+      ...env,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    const child = children[0];
+    child.stdout.write('{"text":"hello","langs":["ja"]}\n');
+    child.stderr.write(`[skyhigh] login password=${PASSWORD}\n`);
+    child.stderr.write("token eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl\n");
+    // 実行中に次の枠が来る（skipped）。
+    await vi.advanceTimersByTimeAsync(1500);
+    child.stderr.write("[skyhigh] failed: boom\n");
+    child.stderr.write(
+      "[skyhigh] summary: status=aborted processed=1 fetch_failed=1\n",
+    );
+    child.stdout.write("tail without newline");
+    await child.close(1);
+    await vi.advanceTimersByTimeAsync(0);
+    await scheduler?.shutdown("SIGTERM");
+    return { out: out.join(""), err: err.join("") };
+  }
+
+  it("text（既定）", async () => {
+    const { out, err } = await scenario({});
+    expect(out).toMatchInlineSnapshot(`
+      "{"text":"hello","langs":["ja"]}
+      tail without newline"
+    `);
+    expect(err).toMatchInlineSnapshot(`
+      "[scheduler] start mode=dry-run jobs=skyhigh service=bsky-bots env=production
+      [scheduler] warn: DISCORD_WEBHOOK_URL is not set; failures will not be notified
+      [scheduler] run job=skyhigh run_id=skyhigh-2026-11-24T00:00:01.000Z
+      [skyhigh] login password=<redacted>
+      token <redacted>
+      [scheduler] skipped job=skyhigh reason=overlap
+      [skyhigh] failed: boom
+      [skyhigh] summary: status=aborted processed=1 fetch_failed=1
+      [scheduler] done job=skyhigh run_id=skyhigh-2026-11-24T00:00:01.000Z exit=1 signal=none timeout=false elapsed=1.5s
+      [scheduler] would notify job=skyhigh run_id=skyhigh-2026-11-24T00:00:01.000Z
+      [scheduler] stopping signal=SIGTERM running=none
+      [scheduler] stopped
+      "
+    `);
+  });
+
+  it("json: すべての行を stdout に 1 行 1 JSON で出す", async () => {
+    const { out, err } = await scenario({ LOG_FORMAT: "json" });
+    expect(err).toBe("");
+    expect(out).toMatchInlineSnapshot(`
+      "{"ts":"2026-11-24T00:00:00.000Z","level":"info","service":"bsky-bots","env":"production","stream":"scheduler","msg":"start mode=dry-run jobs=skyhigh service=bsky-bots env=production"}
+      {"ts":"2026-11-24T00:00:00.000Z","level":"warn","service":"bsky-bots","env":"production","stream":"scheduler","msg":"DISCORD_WEBHOOK_URL is not set; failures will not be notified"}
+      {"ts":"2026-11-24T00:00:01.000Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"scheduler","msg":"run"}
+      {"ts":"2026-11-24T00:00:01.000Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stdout","msg":"{\\"text\\":\\"hello\\",\\"langs\\":[\\"ja\\"]}"}
+      {"ts":"2026-11-24T00:00:01.000Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stderr","msg":"[skyhigh] login password=<redacted>"}
+      {"ts":"2026-11-24T00:00:01.000Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stderr","msg":"token <redacted>"}
+      {"ts":"2026-11-24T00:00:02.001Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","stream":"scheduler","msg":"skipped reason=overlap"}
+      {"ts":"2026-11-24T00:00:02.500Z","level":"error","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stderr","msg":"[skyhigh] failed: boom"}
+      {"ts":"2026-11-24T00:00:02.500Z","level":"warn","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stderr","msg":"[skyhigh] summary: status=aborted processed=1 fetch_failed=1"}
+      {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stdout","msg":"tail without newline"}
+      {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"scheduler","msg":"done exit=1 signal=none timeout=false elapsed=1.5s"}
+      {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"scheduler","msg":"would notify"}
+      {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","stream":"scheduler","msg":"stopping signal=SIGTERM running=none"}
+      {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","stream":"scheduler","msg":"stopped"}
+      "
+    `);
+    const lines = out.trimEnd().split("\n");
+    for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
+    // 子の stdout はパースせず文字列のまま入れる。
+    expect(JSON.parse(lines[3]).msg).toBe('{"text":"hello","langs":["ja"]}');
+    expect(out).not.toContain(PASSWORD);
+  });
+
+  it("LOG_FORMAT が text / json 以外なら起動しない", () => {
+    const { scheduler, log } = setup({ LOG_FORMAT: "yaml" });
+    expect(scheduler).toBeNull();
+    expect(log()).toBe(
+      "[scheduler] error: invalid LOG_FORMAT: yaml (text or json)\n",
+    );
+  });
+
+  it("json では設定のエラーも stdout に json で出す", () => {
+    const { scheduler, out, err } = setup({
+      LOG_FORMAT: "json",
+      BOT_JOBS: "foo",
+    });
+    expect(scheduler).toBeNull();
+    expect(err).toEqual([]);
+    expect(JSON.parse(out.join(""))).toEqual({
+      ts: "2026-11-24T00:00:00.000Z",
+      level: "error",
+      service: "bsky-bots",
+      env: "production",
+      stream: "scheduler",
+      msg: "unknown job in BOT_JOBS: foo",
+    });
+  });
+
+  it("LOG_LEVEL が debug / info / warn 以外なら起動しない", () => {
+    const { scheduler, log } = setup({ LOG_LEVEL: "trace" });
+    expect(scheduler).toBeNull();
+    expect(log()).toContain("invalid LOG_LEVEL: trace");
+  });
+
+  it("LOG_LEVEL=warn はスケジューラの info を落とし、子の出力は落とさない", async () => {
+    const { out, err } = await scenario({ LOG_LEVEL: "warn" });
+    expect(out).toBe('{"text":"hello","langs":["ja"]}\ntail without newline');
+    expect(err).toMatchInlineSnapshot(`
+      "[scheduler] start mode=dry-run jobs=skyhigh service=bsky-bots env=production
+      [scheduler] warn: DISCORD_WEBHOOK_URL is not set; failures will not be notified
+      [skyhigh] login password=<redacted>
+      token <redacted>
+      [skyhigh] failed: boom
+      [skyhigh] summary: status=aborted processed=1 fetch_failed=1
+      "
+    `);
+  });
+
+  it("LOG_LEVEL=debug は tick・jitter・状態ファイルの書き込みも出す", async () => {
+    vi.setSystemTime(new Date("2026-11-24T00:26:59Z"));
+    const { log } = setup({ BOT_JOBS: "jiho", LOG_LEVEL: "debug" }, () => 0.5);
+    expect(log()).toContain(
+      `[scheduler] debug: state written path=${join(stateDir, "scheduler-state.json")}\n`,
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(log()).toContain("[scheduler] debug: tick job=jiho jitter=180.0s\n");
+  });
+
+  it("LOG_LEVEL=info（既定）では debug の行を出さない", async () => {
+    vi.setSystemTime(new Date("2026-11-24T00:26:59Z"));
+    const { log } = setup({ BOT_JOBS: "jiho" }, () => 0.5);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(log()).not.toContain("debug:");
+  });
+});
