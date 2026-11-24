@@ -2,6 +2,8 @@
 
 Bluesky の日次集計 Bot をまとめたリポジトリ。
 
+> Coolify（Docker）で動かす手順は [DEPLOYMENT.md](DEPLOYMENT.md)。systemd（LXC）版は [docs/deploy.md](docs/deploy.md)。
+
 | Bot | アカウント | 内容 |
 | --- | --- | --- |
 | skyhigh | [@skyhigh.bsky.social](https://bsky.app/profile/skyhigh.bsky.social) | フォロワーの前日投稿数ランキングを毎日投稿する |
@@ -45,7 +47,7 @@ node dist/tools/probe.js did:plc:bomm4rqxhepvv7uc6nm5zyyp 2026-02-14
   `createdAt` は実行のたびに変わるので新旧の diff 対象から外すこと。
 - 進捗・エラーなどのログは stderr に出す（stdout を JSON Lines 専用にするため）。
 
-認証情報は `.env`（`.env.sample` を参照）。Bot ごとに
+認証情報は `.env`（全変数の一覧は `.env.example`。systemd 版の例は `.env.sample`）。Bot ごとに
 `SKYHIGH_IDENTIFIER` / `SKYHIGH_APP_PASSWORD` / `SKYLOG_IDENTIFIER` / `SKYLOG_APP_PASSWORD` /
 `JIHO_IDENTIFIER` / `JIHO_APP_PASSWORD`。
 **`AUTHOR` / `PASSWORD` へのフォールバックは持たない**（2 Bot が 1 つの .env を共有するため、
@@ -139,6 +141,7 @@ PDS 直読みに切り替えた時点（Phase 3）で、以下は**意図して�
 
 - [docs/findings.md](docs/findings.md) — 統合前の実測調査（稼働状況・依存の破壊的変更・重複の洗い出し）
 - [docs/design.md](docs/design.md) — 統合設計
+- [DEPLOYMENT.md](DEPLOYMENT.md) — Coolify（Docker）で常駐スケジューラとして動かす手順・環境変数・切り替えとロールバック
 - [docs/deploy.md](docs/deploy.md) — OS の systemd（timer）への設置（任意の場所に clone して `deploy/install.sh` で登録）・一斉切り替え・ロールバック手順
 
 ## 状態
