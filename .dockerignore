@@ -1,0 +1,15 @@
+# build ステージで typecheck・lint・test を実行するので、テストファイルと
+# 設定ファイル（biome.json・tsconfig.json）は入れたままにする。
+.git
+node_modules
+dist
+legacy
+bsky-*/
+.claude
+.env
+.env.*
+!.env.example
+# systemd 版（deploy/install.test.ts もここにあるので、イメージのビルドでは実行されない）
+deploy
+docs
+*.car
