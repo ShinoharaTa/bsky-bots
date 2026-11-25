@@ -1,5 +1,7 @@
 # デプロイ手順（systemd system 版 / Proxmox Debian コンテナ）
 
+> Coolify（Docker）で動かす手順は [DEPLOYMENT.md](../DEPLOYMENT.md)。Coolify への切り替え中は、この systemd 版と Bot ごとに入れ替える。
+
 作成 2026-10-22 / 対象: issue #4（GCP から自宅サーバーの systemd timer へ移す）・#22（OS の systemd で動かす構成）・#26（任意の場所に clone して動かす）
 
 3 Bot（skyhigh / skylog / 時報）を、Proxmox の Debian コンテナ（LXC）の **OS の systemd** に
