@@ -62,7 +62,7 @@ docker ps                                   # STATUS が (healthy) になる（s
 docker kill --signal=TERM <container>       # [scheduler] stopping → stopped で exit 0
 ```
 
-- `BOT_MODE` を付けなければ dry-run（投稿しない。ログインもしない）。**ローカルで `BOT_MODE=live` にしない。**
+- `BOT_MODE` を付けなければ dry-run（投稿しない。ログインも起動時の確認だけ。6 章）。**ローカルで `BOT_MODE=live` にしない。**
 - `JOB_CRON_*` などの上書きは dry-run 専用。`BOT_MODE=live` で 1 つでも設定されていると起動しない。
 
 ---
@@ -165,6 +165,39 @@ jiho は :27 / :57 から 0〜6 分後に起動し数秒で終わるので、そ
 - 子の stdout（dry-run の投稿 JSON）は `msg` に**文字列のまま**入る（パースしない）。
 - `LOG_LEVEL` はスケジューラ自身の行にだけ効く。Bot の出力は落とさない。起動行（`start` / `MODE=LIVE`）は `LOG_LEVEL` に関わらず出る。
 
+### 起動時のログイン確認
+
+起動するたびに（ready になった後、裏で）有効な各ジョブの `<BOT>_IDENTIFIER` と `<BOT>_APP_PASSWORD` で
+bsky.social に 1 回だけ login し、通ったらすぐ logout する。投稿はしない。dry-run でも認証情報が入っていれば行う。
+App Password の入れ間違い・失効を、最初の投稿の時刻を待たずに見つけるため。ジョブは 1 つずつ順に確かめ、1 回の login は 15 秒で打ち切る。
+
+```
+[scheduler] login check job=jiho result=ok
+[scheduler] login check job=skyhigh result=failed reason=Invalid identifier or password
+[scheduler] login check job=skylog result=unset reason=SKYLOG_IDENTIFIER, SKYLOG_APP_PASSWORD is not set
+[scheduler] login check job=jiho result=skipped previous=ok checked_at=2026-11-24T07:10:00.000Z
+```
+
+```json
+{"ts":"2026-11-24T07:16:00.512Z","level":"info","service":"bsky-bots","env":"production","job":"jiho","stream":"scheduler","msg":"login check result=ok"}
+{"ts":"2026-11-24T07:16:01.034Z","level":"error","service":"bsky-bots","env":"production","job":"skyhigh","stream":"scheduler","msg":"login check result=failed reason=Invalid identifier or password"}
+```
+
+| result | level | 意味 |
+| --- | --- | --- |
+| `ok` | info | login できた |
+| `failed` | error | login できなかった（`reason` に理由。秘密の値は伏字）。skyhigh / skylog は失敗通知と同じ条件で Discord にも送る（live、または dry-run で `NOTIFY_IN_DRY_RUN=true`） |
+| `unset` | warn | `<BOT>_IDENTIFIER` か `<BOT>_APP_PASSWORD` が無い・空（dry-run のときだけ起こる。live は起動しない） |
+| `skipped` | info | 同じ認証情報で 10 分以内に確かめ済み。試さず前回の結果（`previous`、`checked_at`）を引き継ぐ。通知もしない |
+
+- **失敗してもスケジューラは落とさず、healthy のまま。** 落とすと Coolify が再起動を繰り返し、そのたびに login して
+  createSession の回数制限に当たりやすくなる（当たると正しい認証情報でも投稿できなくなる）。気づくのはログと Discord で。
+- 再起動が続いても、同じ認証情報なら 10 分以内は試し直さない。認証情報を直したら（値が変わるので）再デプロイで
+  すぐ確かめ直される。
+- 状態ファイル（`/data/scheduler-state.json`）の各ジョブに `login: {result, at, fp, reason?}` が残る（確かめる前は `pending`）。
+  `fp` は認証情報の短いハッシュ（sha256 の先頭 16 桁）で、値そのものではない。ログには出さない。
+- login の回数は、起動 1 回につき 1 Bot 1 回増えるだけ（10 分以内の再起動なら増えない）。
+
 ### よく見るもの
 
 ```bash
@@ -186,6 +219,8 @@ LogQL の例（Loki を接続した後。ラベル `{app="bsky-bots"}` は接続
 {app="bsky-bots"} | json | level=~"warn|error"
 # ジョブごとの終了（json）
 {app="bsky-bots"} | json | stream="scheduler" and job="skyhigh" and msg=~"done .*"
+# 起動時のログイン確認で通らなかった Bot（json）
+{app="bsky-bots"} | json | stream="scheduler" and msg=~"login check result=(failed|unset).*"
 ```
 
 ### 不在アラート（Grafana。作るのは基盤側）
@@ -207,7 +242,7 @@ absent_over_time({app="bsky-bots"} | json | job="jiho" and stream="scheduler" an
 
 LXC の systemd 版（live）を動かしたまま、Coolify 側を **dry-run** で 3 日動かす。
 `BOT_MODE=dry-run`（または未設定）・`BOT_JOBS=skyhigh,skylog,jiho` にして Deploy する。
-dry-run は投稿もログインもしないので、LXC 側と並べても二重投稿にならない。
+dry-run は投稿しない（ログインは起動時の確認だけ。6 章）ので、LXC 側と並べても二重投稿にならない。
 
 確かめること:
 

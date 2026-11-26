@@ -6,6 +6,12 @@ import { buildCodeBlockMessage, postWebhook } from "../core/discord.js";
 import { ConfigError, loadConfig, type SchedulerConfig } from "./config.js";
 import { JOB_TIMEZONE, type JobDefinition } from "./jobs.js";
 import {
+  credentialFingerprint,
+  defaultLogin,
+  LOGIN_CHECK_COOLDOWN_MS,
+  type LoginFn,
+} from "./login-check.js";
+import {
   childLevel,
   createRedactor,
   type Fields,
@@ -21,6 +27,8 @@ import {
 import { isFailure, type RunResult, runJob, type SpawnFn } from "./runner.js";
 import {
   type JobState,
+  type LoginState,
+  readState,
   type SchedulerState,
   statePath,
   writeState,
@@ -49,6 +57,8 @@ export interface SchedulerDeps {
   sleep: (ms: number) => Promise<void>;
   /** 子プロセスの cwd（アプリのルート）。 */
   cwd: string;
+  /** 起動時のログイン確認。 */
+  login: LoginFn;
 }
 
 export interface Scheduler {
@@ -90,6 +100,35 @@ function failureMessage(
     header.push(`spawn error: ${result.spawnError}`);
   }
   return buildCodeBlockMessage(header.join("\n"), result.stderrTail.join("\n"));
+}
+
+function loginFailureMessage(
+  config: SchedulerConfig,
+  job: JobDefinition,
+  checkedAt: number,
+  reason: string,
+): string {
+  const header = [
+    `**${config.serviceName}: ${job.name} login check failed**`,
+    `env: ${config.appEnv}`,
+    `time: ${formatJstDateTime(checkedAt)} JST`,
+    `mode: ${config.mode}`,
+  ];
+  return buildCodeBlockMessage(header.join("\n"), reason);
+}
+
+/** 前回の確認を使い回せるか（同じ認証情報で、10 分以内に ok / failed が出ている）。 */
+function reusableLogin(
+  previous: LoginState | undefined,
+  fp: string,
+  now: number,
+): previous is LoginState & { at: string } {
+  if (!previous || previous.fp !== fp || previous.at === null) return false;
+  if (previous.result !== "ok" && previous.result !== "failed") return false;
+  const checkedAt = Date.parse(previous.at);
+  return (
+    Number.isFinite(checkedAt) && now - checkedAt < LOGIN_CHECK_COOLDOWN_MS
+  );
 }
 
 function resultFields(result: RunResult): Fields {
@@ -202,25 +241,34 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
   const active = new Set<Promise<void>>();
   const entries: JobEntry[] = [];
 
-  const notify = async (
+  /** Discord に送る。fields は would notify と送信失敗の行に付ける。 */
+  const sendNotice = async (
+    job: JobDefinition,
+    fields: Fields,
+    content: () => string,
+  ) => {
+    if (!job.discord) return;
+    if (!live && !config.notifyInDryRun) {
+      log("would notify", fields);
+      return;
+    }
+    if (!config.webhookUrl) return;
+    await postWebhook(config.webhookUrl, redact(content()), {
+      fetch: deps.fetch,
+      sleep: deps.sleep,
+      stderr: (line) => log(line, fields, "warn"),
+    });
+  };
+
+  const notify = (
     job: JobDefinition,
     runId: string,
     startedAt: number,
     result: RunResult,
-  ) => {
-    if (!job.discord) return;
-    if (!live && !config.notifyInDryRun) {
-      log("would notify", { job: job.name, run_id: runId });
-      return;
-    }
-    if (!config.webhookUrl) return;
-    const content = failureMessage(config, job, runId, startedAt, result);
-    await postWebhook(config.webhookUrl, redact(content), {
-      fetch: deps.fetch,
-      sleep: deps.sleep,
-      stderr: (line) => log(line, { job: job.name, run_id: runId }, "warn"),
-    });
-  };
+  ) =>
+    sendNotice(job, { job: job.name, run_id: runId }, () =>
+      failureMessage(config, job, runId, startedAt, result),
+    );
 
   const execute = async (entry: JobEntry) => {
     const { job, state } = entry;
@@ -270,6 +318,9 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
     }
   };
 
+  // 前回の状態（ログイン確認の使い回し用）。最初の書き込みで上書きされる前に読む。
+  const previousState = readState(config.stateDir);
+
   try {
     for (const job of config.jobs) {
       const entry = {
@@ -280,6 +331,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
           running: false,
           lastExit: null,
           lastRunAt: null,
+          login: { result: "pending", at: null, fp: null },
         },
       } as JobEntry;
       entry.cron = new Cron(
@@ -331,6 +383,78 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
     }
   }, STATE_INTERVAL_MS);
 
+  /** 1 ジョブ分のログイン確認。結果を entry.state.login に入れる。 */
+  const checkLogin = async (entry: JobEntry) => {
+    const { job, state } = entry;
+    const prefix = job.name.toUpperCase();
+    const keys = [`${prefix}_IDENTIFIER`, `${prefix}_APP_PASSWORD`];
+    const [identifier, password] = keys.map((key) => deps.env[key] || "");
+    const missing = keys.filter((key) => !deps.env[key]);
+    if (missing.length > 0) {
+      state.login = { result: "unset", at: null, fp: null };
+      log(
+        "login check",
+        {
+          job: job.name,
+          result: "unset",
+          reason: `${missing.join(", ")} is not set`,
+        },
+        "warn",
+      );
+      return;
+    }
+    const fp = credentialFingerprint(identifier, password);
+    const previous = Array.isArray(previousState?.jobs)
+      ? previousState.jobs.find((saved) => saved?.name === job.name)?.login
+      : undefined;
+    if (reusableLogin(previous, fp, deps.now())) {
+      state.login = { ...previous };
+      log(
+        "login check",
+        {
+          job: job.name,
+          result: "skipped",
+          previous: previous.result,
+          checked_at: previous.at,
+        },
+        "info",
+      );
+      return;
+    }
+    const checkedAt = deps.now();
+    const result = await deps.login(identifier, password);
+    const at = new Date(checkedAt).toISOString();
+    if (result.ok) {
+      state.login = { result: "ok", at, fp };
+      log("login check", { job: job.name, result: "ok" }, "info");
+      return;
+    }
+    // 状態ファイルにも秘密を残さない。
+    state.login = { result: "failed", at, fp, reason: redact(result.reason) };
+    log(
+      "login check",
+      { job: job.name, result: "failed", reason: result.reason },
+      "error",
+    );
+    await sendNotice(job, { job: job.name }, () =>
+      loginFailureMessage(config, job, checkedAt, result.reason),
+    );
+  };
+
+  /** 起動時のログイン確認。ジョブごとに直列。shutdown は待たない。 */
+  const checkLogins = async () => {
+    for (const entry of entries) {
+      if (stopping) return;
+      await checkLogin(entry);
+      if (stopping) return;
+      try {
+        saveState();
+      } catch (ex) {
+        log(`error: cannot write state to ${config.stateDir}: ${ex}`);
+      }
+    }
+  };
+
   let shuttingDown: Promise<number> | undefined;
   const shutdown = (signal: string): Promise<number> => {
     shuttingDown ??= (async () => {
@@ -349,6 +473,11 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
     return shuttingDown;
   };
 
+  // ready を待たせない。例外はここで止める。
+  void Promise.resolve()
+    .then(checkLogins)
+    .catch((ex) => log(`error: login check failed: ${ex}`));
+
   return { config, snapshot, shutdown };
 }
 
@@ -363,6 +492,7 @@ const defaultDeps: SchedulerDeps = {
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   // dist/scheduler/main.js から見たアプリのルート。
   cwd: fileURLToPath(new URL("../..", import.meta.url)),
+  login: defaultLogin,
 };
 
 // テストから import したときは実行しない。
