@@ -17,6 +17,18 @@ export interface JobState {
   lastExit: number | string | null;
   /** 前回の起動時刻（ISO）。 */
   lastRunAt: string | null;
+  /** 起動時のログイン確認の結果。healthcheck は見ない。 */
+  login?: LoginState;
+}
+
+export interface LoginState {
+  /** pending: 未確認。unset: 認証情報が無い。 */
+  result: "pending" | "ok" | "failed" | "unset";
+  /** 確認した時刻（ISO）。 */
+  at: string | null;
+  /** 認証情報の短いハッシュ（credentialFingerprint）。値ではない。 */
+  fp: string | null;
+  reason?: string;
 }
 
 export interface SchedulerState {

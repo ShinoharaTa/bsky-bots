@@ -1,13 +1,14 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkHealth } from "./healthcheck.js";
+import { credentialFingerprint, type LoginFn } from "./login-check.js";
 import { type Scheduler, type SchedulerDeps, startScheduler } from "./main.js";
-import { readState } from "./state.js";
+import { readState, type SchedulerState, statePath } from "./state.js";
 
 /** 実在しない URL。fetch を差し替えるので送信はしない。 */
 const WEBHOOK = "https://discord.example/api/webhooks/123/secret-token-xyz";
@@ -47,7 +48,11 @@ afterEach(() => {
   rmSync(stateDir, { recursive: true, force: true });
 });
 
-function setup(env: NodeJS.ProcessEnv, random = () => 0) {
+function setup(
+  env: NodeJS.ProcessEnv,
+  random = () => 0,
+  login = vi.fn<LoginFn>(async () => ({ ok: true })),
+) {
   const children: FakeChild[] = [];
   const spawn = vi.fn(
     (_command: string, _args: readonly string[], _options: object) => {
@@ -72,6 +77,7 @@ function setup(env: NodeJS.ProcessEnv, random = () => 0) {
     fetch: fetchMock as unknown as typeof fetch,
     sleep,
     cwd: "/app",
+    login,
   };
   const scheduler = startScheduler(deps);
   if (scheduler) started.push(scheduler);
@@ -93,6 +99,7 @@ function setup(env: NodeJS.ProcessEnv, random = () => 0) {
     err,
     log,
     contents,
+    login,
   };
 }
 
@@ -449,6 +456,7 @@ describe("ログの形式", () => {
     expect(err).toMatchInlineSnapshot(`
       "[scheduler] start mode=dry-run jobs=skyhigh service=bsky-bots env=production
       [scheduler] warn: DISCORD_WEBHOOK_URL is not set; failures will not be notified
+      [scheduler] login check job=skyhigh result=unset reason=SKYHIGH_IDENTIFIER is not set
       [scheduler] run job=skyhigh run_id=skyhigh-2026-11-24T00:00:01.000Z
       [skyhigh] login password=<redacted>
       token <redacted>
@@ -469,6 +477,7 @@ describe("ログの形式", () => {
     expect(out).toMatchInlineSnapshot(`
       "{"ts":"2026-11-24T00:00:00.000Z","level":"info","service":"bsky-bots","env":"production","stream":"scheduler","msg":"start mode=dry-run jobs=skyhigh service=bsky-bots env=production"}
       {"ts":"2026-11-24T00:00:00.000Z","level":"warn","service":"bsky-bots","env":"production","stream":"scheduler","msg":"DISCORD_WEBHOOK_URL is not set; failures will not be notified"}
+      {"ts":"2026-11-24T00:00:00.000Z","level":"warn","service":"bsky-bots","env":"production","job":"skyhigh","stream":"scheduler","msg":"login check result=unset reason=SKYHIGH_IDENTIFIER is not set"}
       {"ts":"2026-11-24T00:00:01.000Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"scheduler","msg":"run"}
       {"ts":"2026-11-24T00:00:01.000Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stdout","msg":"{\\"text\\":\\"hello\\",\\"langs\\":[\\"ja\\"]}"}
       {"ts":"2026-11-24T00:00:01.000Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stderr","msg":"[skyhigh] login password=<redacted>"}
@@ -486,7 +495,7 @@ describe("ログの形式", () => {
     const lines = out.trimEnd().split("\n");
     for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
     // 子の stdout はパースせず文字列のまま入れる。
-    expect(JSON.parse(lines[3]).msg).toBe('{"text":"hello","langs":["ja"]}');
+    expect(JSON.parse(lines[4]).msg).toBe('{"text":"hello","langs":["ja"]}');
     expect(out).not.toContain(PASSWORD);
   });
 
@@ -527,6 +536,7 @@ describe("ログの形式", () => {
     expect(err).toMatchInlineSnapshot(`
       "[scheduler] start mode=dry-run jobs=skyhigh service=bsky-bots env=production
       [scheduler] warn: DISCORD_WEBHOOK_URL is not set; failures will not be notified
+      [scheduler] login check job=skyhigh result=unset reason=SKYHIGH_IDENTIFIER is not set
       [skyhigh] login password=<redacted>
       token <redacted>
       [skyhigh] failed: boom
@@ -550,5 +560,291 @@ describe("ログの形式", () => {
     const { log } = setup({ BOT_JOBS: "jiho" }, () => 0.5);
     await vi.advanceTimersByTimeAsync(31_000);
     expect(log()).not.toContain("debug:");
+  });
+});
+
+describe("起動時のログイン確認", () => {
+  const IDENTIFIER = "jiho.test";
+  const credentials = {
+    JIHO_IDENTIFIER: IDENTIFIER,
+    JIHO_APP_PASSWORD: PASSWORD,
+  };
+
+  /** 前回の起動が残した状態ファイル。 */
+  function writePrevious(login: object, name = "jiho") {
+    const state: SchedulerState = {
+      ts: Date.now(),
+      ready: true,
+      mode: "dry-run",
+      pid: 1,
+      jobs: [
+        {
+          name,
+          next: null,
+          running: false,
+          lastExit: null,
+          lastRunAt: null,
+          ...login,
+        },
+      ],
+    };
+    writeFileSync(statePath(stateDir), `${JSON.stringify(state)}\n`);
+  }
+
+  it("両方あれば 1 回 login し、result=ok を出して状態ファイルに残す", async () => {
+    const { login, log } = setup({ BOT_JOBS: "jiho", ...credentials });
+    // 起動直後（ready の時点）はまだ確認していない。
+    expect(readState(stateDir)?.jobs[0].login).toEqual({
+      result: "pending",
+      at: null,
+      fp: null,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(login).toHaveBeenCalledTimes(1);
+    expect(login).toHaveBeenCalledWith(IDENTIFIER, PASSWORD);
+    expect(log()).toContain("[scheduler] login check job=jiho result=ok\n");
+    expect(readState(stateDir)?.jobs[0].login).toEqual({
+      result: "ok",
+      at: "2026-11-24T00:00:00.000Z",
+      fp: credentialFingerprint(IDENTIFIER, PASSWORD),
+    });
+    expect(log()).not.toContain(PASSWORD);
+    expect(log()).not.toContain(credentialFingerprint(IDENTIFIER, PASSWORD));
+  });
+
+  it("失敗なら error の行を出す。reason の秘密は伏せ、起動したまま", async () => {
+    const login = vi.fn<LoginFn>(async (_id, password) => ({
+      ok: false,
+      reason: `Invalid identifier or password (${password})`,
+    }));
+    const { scheduler, log } = setup(
+      { BOT_JOBS: "jiho", ...credentials },
+      undefined,
+      login,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(scheduler).not.toBeNull();
+    expect(log()).toContain(
+      "[scheduler] login check job=jiho result=failed reason=Invalid identifier or password (<redacted>)\n",
+    );
+    expect(log()).not.toContain(PASSWORD);
+    const state = readState(stateDir);
+    expect(state?.ready).toBe(true);
+    expect(state?.jobs[0].login).toMatchObject({
+      result: "failed",
+      reason: "Invalid identifier or password (<redacted>)",
+    });
+    expect(checkHealth(stateDir, Date.now())).toBe(true);
+  });
+
+  it("login が例外を投げても落とさない", async () => {
+    const login = vi.fn<LoginFn>(async () => {
+      throw new Error("boom");
+    });
+    const { scheduler, log } = setup(
+      { BOT_JOBS: "jiho", ...credentials },
+      undefined,
+      login,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(scheduler).not.toBeNull();
+    expect(log()).toContain(
+      "[scheduler] error: login check failed: Error: boom\n",
+    );
+    expect(readState(stateDir)?.ready).toBe(true);
+  });
+
+  for (const [label, env, reason] of [
+    [
+      "片方無し",
+      { JIHO_IDENTIFIER: IDENTIFIER },
+      "JIHO_APP_PASSWORD is not set",
+    ],
+    [
+      "空文字",
+      { JIHO_IDENTIFIER: "", JIHO_APP_PASSWORD: "" },
+      "JIHO_IDENTIFIER, JIHO_APP_PASSWORD is not set",
+    ],
+  ] as const) {
+    it(`${label}なら login せず unset の warn を出す`, async () => {
+      const { login, log } = setup({ BOT_JOBS: "jiho", ...env });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(login).not.toHaveBeenCalled();
+      expect(log()).toContain(
+        `[scheduler] login check job=jiho result=unset reason=${reason}\n`,
+      );
+      expect(readState(stateDir)?.jobs[0].login).toEqual({
+        result: "unset",
+        at: null,
+        fp: null,
+      });
+    });
+  }
+
+  it("同じ認証情報で 10 分以内に確かめていれば login せず skipped", async () => {
+    const previous = {
+      result: "failed",
+      at: "2026-11-23T23:50:00.001Z",
+      fp: credentialFingerprint(IDENTIFIER, PASSWORD),
+      reason: "Invalid identifier or password",
+    };
+    writePrevious({ login: previous });
+    const { login, log } = setup({ BOT_JOBS: "jiho", ...credentials });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(login).not.toHaveBeenCalled();
+    expect(log()).toContain(
+      "[scheduler] login check job=jiho result=skipped previous=failed checked_at=2026-11-23T23:50:00.001Z\n",
+    );
+    expect(readState(stateDir)?.jobs[0].login).toEqual(previous);
+  });
+
+  it("認証情報が変わっていれば 10 分以内でも login する", async () => {
+    writePrevious({
+      login: {
+        result: "failed",
+        at: "2026-11-23T23:59:00.000Z",
+        fp: credentialFingerprint(IDENTIFIER, "old-password"),
+      },
+    });
+    const { login, log } = setup({ BOT_JOBS: "jiho", ...credentials });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(login).toHaveBeenCalledTimes(1);
+    expect(log()).toContain("[scheduler] login check job=jiho result=ok\n");
+  });
+
+  it("前回が 10 分以上前なら login する", async () => {
+    writePrevious({
+      login: {
+        result: "ok",
+        at: "2026-11-23T23:50:00.000Z",
+        fp: credentialFingerprint(IDENTIFIER, PASSWORD),
+      },
+    });
+    const { login } = setup({ BOT_JOBS: "jiho", ...credentials });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(login).toHaveBeenCalledTimes(1);
+  });
+
+  it("ジョブごとに直列で確かめ、それぞれの結果を残す", async () => {
+    const { login, log } = setup({
+      BOT_JOBS: "skyhigh,jiho",
+      SKYHIGH_IDENTIFIER: "skyhigh.test",
+      SKYHIGH_APP_PASSWORD: "skyhigh-password",
+      ...credentials,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(login.mock.calls).toEqual([
+      ["skyhigh.test", "skyhigh-password"],
+      [IDENTIFIER, PASSWORD],
+    ]);
+    expect(log()).toContain("login check job=skyhigh result=ok\n");
+    expect(log()).toContain("login check job=jiho result=ok\n");
+    expect(readState(stateDir)?.jobs.map((job) => job.login?.result)).toEqual([
+      "ok",
+      "ok",
+    ]);
+  });
+
+  describe("失敗の通知", () => {
+    const failing = () =>
+      vi.fn<LoginFn>(async () => ({
+        ok: false,
+        reason: "AuthFactorTokenRequired",
+      }));
+    const skyhigh = {
+      BOT_JOBS: "skyhigh",
+      SKYHIGH_IDENTIFIER: "skyhigh.test",
+      SKYHIGH_APP_PASSWORD: PASSWORD,
+      DISCORD_WEBHOOK_URL: WEBHOOK,
+    };
+
+    it("dry-run（NOTIFY_IN_DRY_RUN なし）では送らず would notify を出す", async () => {
+      const { fetchMock, log } = setup(skyhigh, undefined, failing());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(log()).toContain("[scheduler] would notify job=skyhigh\n");
+    });
+
+    it("live で webhook があれば 1 回送る", async () => {
+      const { fetchMock, contents } = setup(
+        { ...skyhigh, BOT_MODE: "live" },
+        undefined,
+        failing(),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]).toContain(WEBHOOK);
+      expect(contents()[0]).toBe(
+        [
+          "**bsky-bots: skyhigh login check failed**",
+          "env: production",
+          "time: 2026/11/24 09:00:00 JST",
+          "mode: live",
+          "```",
+          "AuthFactorTokenRequired",
+          "```",
+        ].join("\n"),
+      );
+    });
+
+    it("jiho（discord なし）は送らない", async () => {
+      const { fetchMock, log } = setup(
+        {
+          BOT_MODE: "live",
+          BOT_JOBS: "jiho",
+          ...credentials,
+          DISCORD_WEBHOOK_URL: WEBHOOK,
+        },
+        undefined,
+        failing(),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(log()).toContain("login check job=jiho result=failed");
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(log()).not.toContain("would notify");
+    });
+  });
+
+  it("json では 1 行の JSON で、job が入る", async () => {
+    const { out } = setup({
+      BOT_JOBS: "jiho",
+      LOG_FORMAT: "json",
+      ...credentials,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const lines = out
+      .join("")
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(lines.filter((line) => line.msg.startsWith("login check"))).toEqual([
+      {
+        ts: "2026-11-24T00:00:00.000Z",
+        level: "info",
+        service: "bsky-bots",
+        env: "production",
+        job: "jiho",
+        stream: "scheduler",
+        msg: "login check result=ok",
+      },
+    ]);
+  });
+
+  it("shutdown の後に終わった確認は状態ファイルに書かない", async () => {
+    let finish: (value: { ok: true }) => void = () => {};
+    const login = vi.fn<LoginFn>(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    const { scheduler } = setup(
+      { BOT_JOBS: "jiho", ...credentials },
+      undefined,
+      login,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(login).toHaveBeenCalledTimes(1);
+    await expect(scheduler?.shutdown("SIGTERM")).resolves.toBe(0);
+    finish({ ok: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(readState(stateDir)?.jobs[0].login?.result).toBe("pending");
   });
 });
