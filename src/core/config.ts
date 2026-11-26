@@ -33,8 +33,9 @@ export function loadCredentials(bot: BotDefinition): BotCredentials {
 
 /**
  * フォロワー取得の対象。dry-run は認証情報を要求しないので、
- * 環境変数が無ければ Bot 設定の既定ハンドルに落とす。
+ * 環境変数が無いか空文字なら Bot 設定の既定ハンドルに落とす。
+ * （Coolify ではキーだけ空の値で先に作ることがある）
  */
 export function resolveActor(bot: AggregateBotDefinition): string {
-  return process.env[envName(bot, "IDENTIFIER")] ?? bot.defaultHandle;
+  return process.env[envName(bot, "IDENTIFIER")] || bot.defaultHandle;
 }
