@@ -81,7 +81,7 @@ docker kill --signal=TERM <container>       # [scheduler] stopping → stopped �
 | `SERVICE_NAME` | `bsky-bots` | いいえ | 通常は入れない | ログと Discord に出す名前 |
 | `APP_ENV` | `production` | いいえ | 通常は入れない | ラベル。live の判定には使わない |
 | `LOG_FORMAT` | `text` | いいえ | ユーザー / Claude | `text` / `json` |
-| `LOG_LEVEL` | `info` | いいえ | ユーザー / Claude | `debug` / `info` / `warn`。スケジューラ自身の行にだけ効く |
+| `LOG_LEVEL` | `info` | いいえ | ユーザー / Claude | `debug` / `info` / `warn`。スケジューラ自身の行にだけ効く（例外: `debug` のとき skyhigh が投稿 0 件のハンドル一覧を 1 行出す） |
 | `NOTIFY_IN_DRY_RUN` | `false` | いいえ | ユーザー / Claude | `true` なら dry-run でも Discord に送る |
 | `DISCORD_WEBHOOK_URL` | なし | **はい** | ユーザー（画面） | 任意。skyhigh / skylog の失敗通知先。未設定なら起動時に WARN |
 | `SKYHIGH_IDENTIFIER` / `SKYLOG_IDENTIFIER` / `JIHO_IDENTIFIER` | なし | いいえ | ユーザー / Claude | ハンドル。live のとき有効なジョブの分は必須。dry-run では skyhigh / skylog のフォロワー取得の対象（未設定なら既定のハンドル） |
@@ -163,7 +163,7 @@ jiho は :27 / :57 から 0〜6 分後に起動し数秒で終わるので、そ
 - `level`: 子の行は `info`。` summary: status=` の status が ok 以外なら `warn`、`[<bot>] failed:` を含めば `error`。
   スケジューラ自身の行は `warn:` / `error:` / `spawn failed:` などで決まり、msg からは `warn: ` などの接頭辞を外す。
 - 子の stdout（dry-run の投稿 JSON）は `msg` に**文字列のまま**入る（パースしない）。
-- `LOG_LEVEL` はスケジューラ自身の行にだけ効く。Bot の出力は落とさない。起動行（`start` / `MODE=LIVE`）は `LOG_LEVEL` に関わらず出る。
+- `LOG_LEVEL` はスケジューラ自身の行にだけ効く。Bot の出力は落とさない（例外: `debug` のときだけ skyhigh が投稿 0 件のハンドル一覧を 1 行出す。既定では人数だけ）。起動行（`start` / `MODE=LIVE`）は `LOG_LEVEL` に関わらず出る。
 
 ### 起動時のログイン確認
 
@@ -197,6 +197,9 @@ App Password の入れ間違い・失効を、最初の投稿の時刻を待た�
 - 状態ファイル（`/data/scheduler-state.json`）の各ジョブに `login: {result, at, fp, reason?}` が残る（確かめる前は `pending`）。
   `fp` は認証情報の短いハッシュ（sha256 の先頭 16 桁）で、値そのものではない。ログには出さない。
 - login の回数は、起動 1 回につき 1 Bot 1 回増えるだけ（10 分以内の再起動なら増えない）。
+- 起動時の行がログから流れても分かるよう、各回の `done` の行の末尾に `login=<result>` を付ける
+  （`ok` / `failed` / `unset` / 確かめる前は `pending`。`skipped` のときは引き継いだ前回の結果）。
+  例: `[scheduler] done job=jiho run_id=... exit=0 signal=none timeout=false elapsed=0.4s login=ok`
 
 ### よく見るもの
 

@@ -297,7 +297,13 @@ export function startScheduler(deps: SchedulerDeps): Scheduler | null {
         run_id: runId,
       });
     }
-    log("done", { job: job.name, run_id: runId, ...resultFields(result) });
+    // 起動時のログイン確認の結果を毎回添える（起動時の行が流れても後から分かるように）。
+    log("done", {
+      job: job.name,
+      run_id: runId,
+      ...resultFields(result),
+      login: state.login?.result ?? "pending",
+    });
     if (isFailure(result)) await notify(job, runId, startedAt, result);
   };
 
