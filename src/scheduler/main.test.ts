@@ -268,7 +268,7 @@ describe("スケジュール", () => {
     const runId = "skyhigh-2026-11-24T00:00:01.000Z";
     expect(log()).toContain(`[scheduler] run job=skyhigh run_id=${runId}\n`);
     expect(log()).toContain(
-      `[scheduler] done job=skyhigh run_id=${runId} exit=0 signal=none timeout=false elapsed=0.0s\n`,
+      `[scheduler] done job=skyhigh run_id=${runId} exit=0 signal=none timeout=false elapsed=0.0s login=unset\n`,
     );
   });
 });
@@ -463,7 +463,7 @@ describe("ログの形式", () => {
       [scheduler] skipped job=skyhigh reason=overlap
       [skyhigh] failed: boom
       [skyhigh] summary: status=aborted processed=1 fetch_failed=1
-      [scheduler] done job=skyhigh run_id=skyhigh-2026-11-24T00:00:01.000Z exit=1 signal=none timeout=false elapsed=1.5s
+      [scheduler] done job=skyhigh run_id=skyhigh-2026-11-24T00:00:01.000Z exit=1 signal=none timeout=false elapsed=1.5s login=unset
       [scheduler] would notify job=skyhigh run_id=skyhigh-2026-11-24T00:00:01.000Z
       [scheduler] stopping signal=SIGTERM running=none
       [scheduler] stopped
@@ -486,7 +486,7 @@ describe("ログの形式", () => {
       {"ts":"2026-11-24T00:00:02.500Z","level":"error","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stderr","msg":"[skyhigh] failed: boom"}
       {"ts":"2026-11-24T00:00:02.500Z","level":"warn","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stderr","msg":"[skyhigh] summary: status=aborted processed=1 fetch_failed=1"}
       {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"stdout","msg":"tail without newline"}
-      {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"scheduler","msg":"done exit=1 signal=none timeout=false elapsed=1.5s"}
+      {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"scheduler","msg":"done exit=1 signal=none timeout=false elapsed=1.5s login=unset"}
       {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","job":"skyhigh","run_id":"skyhigh-2026-11-24T00:00:01.000Z","stream":"scheduler","msg":"would notify"}
       {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","stream":"scheduler","msg":"stopping signal=SIGTERM running=none"}
       {"ts":"2026-11-24T00:00:02.500Z","level":"info","service":"bsky-bots","env":"production","stream":"scheduler","msg":"stopped"}
@@ -610,6 +610,33 @@ describe("起動時のログイン確認", () => {
     });
     expect(log()).not.toContain(PASSWORD);
     expect(log()).not.toContain(credentialFingerprint(IDENTIFIER, PASSWORD));
+  });
+
+  it("各回の done の行に login の結果を付ける", async () => {
+    const { children, log } = setup({
+      ...everySecond("jiho"),
+      ...credentials,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await children[0].close(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(log()).toMatch(
+      /\[scheduler\] done job=jiho .* elapsed=\S+ login=ok\n/,
+    );
+  });
+
+  it("確かめる前に終わった回は login=pending", async () => {
+    // login が返らないまま 1 回目が終わる。
+    const login = vi.fn<LoginFn>(() => new Promise(() => {}));
+    const { children, log } = setup(
+      { ...everySecond("jiho"), ...credentials },
+      undefined,
+      login,
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    await children[0].close(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(log()).toMatch(/\[scheduler\] done job=jiho .* login=pending\n/);
   });
 
   it("失敗なら error の行を出す。reason の秘密は伏せ、起動したまま", async () => {

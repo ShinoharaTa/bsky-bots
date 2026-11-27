@@ -100,8 +100,13 @@ export const skyhigh: AggregateBotDefinition = {
         time = formatJstDateTime(Date.now());
         await poster.post(formatEnd(time));
 
+        // 一覧は 1 回で数百行になるので、既定では人数だけ出す。
         const missing = posts.filter((item) => item.posts === 0);
-        console.error(missing);
+        console.error(`[skyhigh] zero-post users: ${missing.length}`);
+        if (process.env.LOG_LEVEL === "debug") {
+          const handles = missing.map((item) => item.handle || item.did);
+          console.error(`[skyhigh] zero-post handles: ${handles.join(" ")}`);
+        }
       },
     );
   },

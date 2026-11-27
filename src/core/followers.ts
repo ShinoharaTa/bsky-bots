@@ -20,6 +20,7 @@ export async function getFollowers(
   let cursor: string | null = null;
   let users: Follower[] = [];
   const seen = new Set<string>();
+  let pages = 0;
   for (let index = 0; index < maxPages; index++) {
     const request: AppBskyGraphGetFollowers.QueryParams = {
       actor: actor,
@@ -29,7 +30,7 @@ export async function getFollowers(
       request.cursor = cursor;
     }
     const { data } = await agent.app.bsky.graph.getFollowers(request);
-    console.error(data.followers.length);
+    pages += 1;
     const getUsers: Follower[] = [];
     for (const item of data.followers) {
       // ページングの途中でフォロワーが増減すると同じ人が 2 ページに出ることがある。
@@ -53,5 +54,7 @@ export async function getFollowers(
       break;
     }
   }
+  // ページごとには出さない（ログが流れるため）。
+  console.error(`followers: ${users.length} (${pages} pages)`);
   return users;
 }
